@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.python-version
+
+# Environment / secrets (DSN с паролем)
+.env
+.env.local
+.env.production
+.env.production.local
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# uv lock — оставляем закоммиченным как best practice
+# (если решим иначе, добавить uv.lock сюда)
+
+# Generated test artifacts
+backend/samples/*.xlsx
+frontend/screenshots/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# DB backups / logs
+*.log
+*.sql.bak
+
+# Claude / Codex local skill caches
+.claude/skills/warm-editorial-design/uploads/
+.codex/skills/

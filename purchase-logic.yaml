@@ -1,0 +1,426 @@
+# ══════════════════════════════════════════════════════════
+# Как читать этот документ
+#
+# YAML описывает логику системы на трёх уровнях:
+#
+# 1. purpose — общее описание: что система делает, для кого,
+#    ключевые принципы. Читай первым.
+#
+# 2. definitions — справочные карточки технических сущностей.
+#    [[id]] в любом тексте = ссылка на definition с таким id.
+#    Здесь описано КАК устроены инструменты, файлы, конфиги.
+#
+# 3. steps → links — граф flow. Шаги описывают действия,
+#    стрелки (links) показывают переходы и ветвления.
+#    Здесь описано ЧТО происходит в системе.
+#
+# Для реализации: шаги говорят что делать, definitions —
+# как именно (API, форматы, параметры).
+# ══════════════════════════════════════════════════════════
+
+purpose: |
+  `ebay_to_buy` — внутренняя система списка закупки eBay для смарт-артикулов.
+
+  Система хранит целевые количества по `smart_part_id`, сверяет их с физически
+  закупленным количеством из `stock_raw` и отдаёт одну основную вьюху для людей,
+  веб-интерфейса и внешних программ.
+
+  Ключевые принципы:
+  - Основной ключ цели — только `smart_part_id`.
+  - На один `smart_part_id` может быть только одна цель закупки.
+  - `is_need` считается только по количеству, без учёта `is_active`.
+  - `is_active=false` означает ручную паузу по позиции, но не меняет факт нехватки.
+  - eBay-объявления хранятся отдельно от цели и могут иметь свободный комментарий.
+  - Ошибки не скрываются: валидация останавливает запись, приложение показывает полный traceback.
+
+definitions:
+  - id: БД ebay_to_buy
+    body_markdown: |
+      Рабочая БД системы закупок:
+      - host: `2.26.53.128`
+      - port: `5406`
+      - database: `ebay_to_buy`
+      - user: `admin`
+
+      Назначение:
+      - хранить [[purchase_targets]]
+      - хранить [[ebay_listings]]
+      - публиковать [[purchase_overview]]
+      - принимать ручные и программные записи целей
+
+      Подготовка БД и FDW — предпосылка работы, не runtime-flow.
+
+  - id: smart catalog
+    body_markdown: |
+      Справочник смарт-артикулов из БД `smart`.
+
+      Используемые данные:
+      - `parts.id` — `smart_part_id`, стабильный ключ
+      - `parts.name` — человекочитаемое название
+      - `parts.articles` — обычные артикулы, используются для поиска и экспорта
+
+      Валидация:
+      - Любая запись в [[purchase_targets]] и [[ebay_listings]] должна ссылаться на существующий `smart_part_id`.
+      - Если `smart_part_id` не найден, запись останавливается ошибкой.
+
+  - id: stock_raw
+    body_markdown: |
+      Вьюха физически закупленного наличия из `parts_uchet`.
+
+      Используемые поля:
+      - `smart_part_id`
+      - `smart_name`
+      - `total_qty`
+
+      Важное правило:
+      - Для этой системы используется только `total_qty`.
+      - `arrived_qty` и `in_transit_qty` отдельно не учитываются: всё это уже считается купленным.
+      - Если строки по `smart_part_id` нет, наличие считается равным `0`.
+
+  - id: purchase_targets
+    body_markdown: |
+      Таблица целевых количеств закупки. Одна строка = одна цель по одному `smart_part_id`.
+
+      <!-- ^fields -->
+      Поля:
+      - `smart_part_id` — primary key, ссылка на [[smart catalog]]
+      - `target_qty` — сколько всего хотим иметь, `integer`, минимум `1`
+      - `is_active` — ручная пауза по цели, `boolean`, по умолчанию `true`
+      - `created_at` — время создания
+      - `updated_at` — время последнего изменения
+
+      <!-- ^rules -->
+      Правила:
+      - Дублей по `smart_part_id` быть не может.
+      - У цели нет комментария.
+      - `target_qty=0` не используется: для паузы есть `is_active=false`.
+      - Перед записью SQL проверяет, что `smart_part_id` существует в [[smart catalog]].
+
+  - id: ebay_listings
+    body_markdown: |
+      Таблица eBay-объявлений, прикреплённых к смарт-артикулам.
+
+      <!-- ^fields -->
+      Поля:
+      - `id` — внутренний идентификатор
+      - `smart_part_id` — ссылка на [[smart catalog]]
+      - `ebay_item_number` — номер объявления eBay, обычный `text`
+      - `comment` — свободный комментарий по конкретному объявлению
+      - `is_ended` — объявление снято с публикации, `boolean`, по умолчанию `false`
+      - `created_at` — время создания
+      - `updated_at` — время последнего изменения
+
+      <!-- ^rules -->
+      Правила:
+      - Номер eBay не превращается в ссылку на уровне БД.
+      - Один `ebay_item_number` нельзя сохранить дважды.
+      - Несколько объявлений могут быть прикреплены к одному `smart_part_id`.
+      - Комментарий относится к конкретному объявлению, не к цели закупки.
+      - Снятое объявление остаётся как история и не удаляется автоматически.
+
+  - id: need formula
+    body_markdown: |
+      Формула нехватки:
+
+      ```text
+      stock_total_qty = coalesce(stock_raw.total_qty, 0)
+      need_qty = greatest(target_qty - stock_total_qty, 0)
+      is_need = target_qty > stock_total_qty
+      ```
+
+      `is_need` не зависит от `is_active`.
+
+  - id: purchase_overview
+    body_markdown: |
+      Главная вьюха для людей, веб-интерфейса и программ.
+
+      <!-- ^columns -->
+      Колонки:
+      - `smart_part_id`
+      - `smart_name`
+      - `articles_text` — артикулы через запятую
+      - `target_qty`
+      - `stock_total_qty`
+      - `need_qty`
+      - `is_need`
+      - `is_active`
+      - `active_ebay_count`
+      - `active_ebay_item_numbers` — активные номера через запятую
+      - `active_ebay_comments` — комментарии к активным объявлениям
+      - `ended_ebay_count`
+      - `ended_ebay_item_numbers` — снятые номера через запятую
+      - `ended_ebay_comments` — комментарии к снятым объявлениям
+      - `created_at`
+      - `updated_at`
+
+      <!-- ^rules -->
+      Правила:
+      - Вьюха содержит все цели из [[purchase_targets]].
+      - Нехватка считается по [[need formula]].
+      - Для списка закупки потребители фильтруют `is_need=true` и при необходимости `is_active=true`.
+
+  - id: smart search
+    body_markdown: |
+      Поиск при ручном добавлении цели.
+
+      Вход: фрагмент `smart_part_id`, обычного артикула или названия.
+
+      Результат показывает:
+      - `smart_part_id`
+      - название
+      - артикулы через запятую
+      - текущее `stock_total_qty`
+      - существующую цель, если она уже есть
+
+      Релевантность:
+      - точный `smart_part_id`
+      - точный артикул
+      - артикул начинается с введённого текста
+      - артикул содержит введённый текст
+      - название содержит введённый текст
+
+      Пользователь выбирает конкретный smart; автоматического выбора по артикулу нет.
+
+  - id: Excel import
+    body_markdown: |
+      Импорт целей закупки из Excel.
+
+      <!-- ^columns -->
+      Входные колонки первой версии:
+      - `smart_part_id`
+      - `target_qty`
+      - `is_active`
+
+      <!-- ^rules -->
+      Правила:
+      - Каждая строка делает upsert в [[purchase_targets]].
+      - Если `smart_part_id` уже есть, обновляются `target_qty` и `is_active`.
+      - Отсутствие строки в файле не удаляет и не деактивирует существующую цель.
+      - eBay-объявления через этот импорт не загружаются.
+      - При ошибке валидации импорт останавливается с полным traceback.
+
+  - id: Excel export
+    body_markdown: |
+      Экспорт из [[purchase_overview]] в Excel.
+
+      <!-- ^filters -->
+      Настройки фильтра:
+      - все цели
+      - только `is_need=true`
+      - только `is_active=true`
+      - только позиции с активными eBay-объявлениями
+      - комбинации этих условий
+
+      <!-- ^fields -->
+      Настройки колонок:
+      - Пользователь выбирает, какие поля выгружать.
+      - Артикулы можно выгружать отдельными колонками `article_1`, `article_2`, ...
+      - Активные eBay-объявления можно выгружать отдельными колонками `active_ebay_item_number_1`, `active_ebay_comment_1`, ...
+      - Снятые eBay-объявления можно выгружать отдельными колонками `ended_ebay_item_number_1`, `ended_ebay_comment_1`, ...
+
+      Цель раскладки по колонкам — чтобы человек мог выделить ячейки и скопировать их целиком.
+
+  - id: validation and errors
+    body_markdown: |
+      Общая политика ошибок.
+
+      Валидация:
+      - `smart_part_id` должен существовать в [[smart catalog]]
+      - `target_qty >= 1`
+      - `ebay_item_number` не пустой
+      - дубли eBay-номеров запрещены
+
+      Ошибки:
+      - Не скрывать ошибки.
+      - Не заменять их молчаливыми fallback-сценариями.
+      - Веб-интерфейс и фоновые операции показывают полный traceback.
+
+  - id: audit
+    body_markdown: |
+      Небольшой аудит изменений.
+
+      Минимальный уровень:
+      - `created_at`
+      - `updated_at`
+
+      Дополнительно допустима простая история изменений:
+      - изменение `target_qty`
+      - изменение `is_active`
+      - добавление или изменение eBay-объявления
+      - изменение `is_ended`
+      - изменение комментария объявления
+
+steps:
+  - id: read-purchase-overview
+    body_markdown: |
+      Человек, веб-интерфейс или программа читает [[purchase_overview]].
+
+      ![[purchase_overview#rules]]
+    links:
+      - to: inspect-needed-items
+        condition: нужен список закупки
+      - to: inspect-all-targets
+        condition: нужны все цели
+      - to: search-smart-for-target
+        condition: нужно добавить цель вручную
+      - to: program-upsert-target
+        condition: программа добавляет или обновляет цель
+      - to: import-targets-from-excel
+        condition: цели пришли из Excel
+      - to: export-overview-to-excel
+        condition: нужна Excel-выгрузка
+
+  - id: inspect-needed-items
+    body_markdown: |
+      Отобрать строки, где `is_need=true`.
+
+      `is_active=false` не меняет `is_need`, но означает ручную паузу по позиции.
+    links:
+      - to: attach-or-update-ebay-listing
+        condition: нужно прикрепить eBay-объявление
+      - to: mark-ebay-listing-ended
+        condition: объявление снято с публикации
+      - to: export-overview-to-excel
+        condition: нужно скопировать список наружу
+
+  - id: inspect-all-targets
+    body_markdown: |
+      Смотреть все строки [[purchase_overview]], включая:
+      - позиции без нехватки
+      - неактивные позиции
+      - позиции без eBay-объявлений
+      - позиции со снятыми eBay-объявлениями
+    links:
+      - to: edit-purchase-target
+        condition: нужно изменить цель
+      - to: attach-or-update-ebay-listing
+        condition: нужно добавить или поправить объявление
+      - to: mark-ebay-listing-ended
+        condition: объявление снято с публикации
+
+  - id: search-smart-for-target
+    body_markdown: |
+      Найти конкретный smart через [[smart search]].
+    links:
+      - to: choose-smart-result
+        condition: есть релевантные результаты
+      - to: stop-with-error
+        condition: подходящий smart не найден
+
+  - id: choose-smart-result
+    body_markdown: |
+      Пользователь выбирает конкретный `smart_part_id` из результатов.
+
+      Автоматического выбора по артикулу нет.
+    links:
+      - to: validate-purchase-target
+        condition: smart выбран
+
+  - id: program-upsert-target
+    body_markdown: |
+      Внешняя программа пишет цель напрямую в [[purchase_targets]].
+
+      ![[purchase_targets#fields]]
+    links:
+      - to: validate-purchase-target
+        condition: перед записью
+
+  - id: import-targets-from-excel
+    body_markdown: |
+      Прочитать Excel-файл целей закупки.
+
+      ![[Excel import#columns]]
+    links:
+      - to: validate-purchase-target
+        condition: для каждой строки файла
+      - to: stop-with-error
+        condition: файл или строка невалидны
+
+  - id: edit-purchase-target
+    body_markdown: |
+      Изменить `target_qty` или `is_active` существующей цели.
+    links:
+      - to: validate-purchase-target
+        condition: перед сохранением
+
+  - id: validate-purchase-target
+    body_markdown: |
+      Проверить цель по правилам [[purchase_targets]] и [[validation and errors]].
+    links:
+      - to: save-purchase-target
+        condition: цель валидна
+      - to: stop-with-error
+        condition: цель невалидна
+
+  - id: save-purchase-target
+    body_markdown: |
+      Сохранить цель через upsert в [[purchase_targets]].
+
+      ![[purchase_targets#rules]]
+    links:
+      - to: refresh-overview
+        condition: запись сохранена
+
+  - id: attach-or-update-ebay-listing
+    body_markdown: |
+      Добавить или обновить eBay-объявление для конкретного `smart_part_id`.
+
+      ![[ebay_listings#fields]]
+    links:
+      - to: validate-ebay-listing
+        condition: перед сохранением
+
+  - id: validate-ebay-listing
+    body_markdown: |
+      Проверить eBay-объявление по правилам [[ebay_listings]] и [[validation and errors]].
+    links:
+      - to: save-ebay-listing
+        condition: объявление валидно
+      - to: stop-with-error
+        condition: объявление невалидно
+
+  - id: save-ebay-listing
+    body_markdown: |
+      Сохранить объявление в [[ebay_listings]].
+
+      ![[ebay_listings#rules]]
+    links:
+      - to: refresh-overview
+        condition: объявление сохранено
+
+  - id: mark-ebay-listing-ended
+    body_markdown: |
+      Пометить конкретное eBay-объявление как снятое с публикации.
+
+      Строка остаётся в [[ebay_listings]] как история.
+    links:
+      - to: refresh-overview
+        condition: статус объявления обновлён
+
+  - id: refresh-overview
+    body_markdown: |
+      Перечитать [[purchase_overview]] после изменения целей или объявлений.
+
+      ![[need formula]]
+    links:
+      - to: inspect-needed-items
+        condition: нужна проверка нехватки
+      - to: inspect-all-targets
+        condition: нужно увидеть все цели
+
+  - id: export-overview-to-excel
+    body_markdown: |
+      Настроить фильтры и колонки Excel-выгрузки.
+
+      ![[Excel export#filters]]
+
+      ![[Excel export#fields]]
+    links:
+      - to: read-purchase-overview
+        condition: после выгрузки продолжаем работу
+
+  - id: stop-with-error
+    body_markdown: |
+      Остановить действие и показать ошибку по [[validation and errors]].
+
+      Никаких молчаливых исправлений или скрытых fallback-сценариев.
