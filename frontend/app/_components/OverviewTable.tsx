@@ -274,6 +274,7 @@ export function OverviewTable({
       ) : (
         <div className="table-wrap">
           <DndContext
+            id="overview-table-dnd"
             sensors={sensors}
             collisionDetection={closestCenter}
             modifiers={[restrictToHorizontalAxis]}
