@@ -51,6 +51,13 @@ export function OverviewControls({
   const [colsOpen, setColsOpen] = useState(false);
   const colsRef = useRef<HTMLDivElement>(null);
 
+  // Синхронизируем локальные input-state с URL — иначе после навигации
+  // («Сброс.», переход по сортировке/пиллу) форма показывает старые значения.
+  useEffect(() => {
+    setQ(current.q ?? "");
+    setMinNeed(current.min_need_qty ?? "");
+  }, [current.q, current.min_need_qty]);
+
   // Закрываем popover при клике снаружи.
   useEffect(() => {
     if (!colsOpen) return;
@@ -109,19 +116,19 @@ export function OverviewControls({
       <div className="filter-row" role="group" aria-label="Фильтры">
         {TRISTATE.map((t) => {
           const v = current[t.key] as string | undefined;
-          const label =
-            v === "true" ? t.label
-            : v === "false" ? `НЕ: ${t.label}`
-            : t.label;
+          const label = v === "false" ? `НЕ: ${t.label}` : t.label;
+          const negativeStyle = v === "false"
+            ? { color: "var(--error-product)", borderColor: "rgba(191,77,67,0.4)", background: "rgba(191,77,67,0.08)" }
+            : undefined;
           return (
             <button
               key={String(t.key)}
               type="button"
-              className={`filter-pill${v === "true" ? " active" : v === "false" ? " active" : ""}`}
+              className={`filter-pill${v ? " active" : ""}`}
               onClick={() => cycleTristate(t.key)}
               data-testid={`pill-${String(t.key)}`}
               data-state={v ?? ""}
-              style={v === "false" ? { color: "var(--error-product)", borderColor: "rgba(191,77,67,0.4)", background: "rgba(191,77,67,0.08)" } : undefined}
+              style={negativeStyle}
             >
               {label}
             </button>

@@ -1,20 +1,29 @@
 "use client";
 
 import { Check, Copy } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export function CopyChip({ text, mono = true }: { text: string; mono?: boolean }) {
   const [copied, setCopied] = useState(false);
+  const timer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (timer.current) window.clearTimeout(timer.current);
+  }, []);
+
+  function flash() {
+    setCopied(true);
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied(false), 1500);
+  }
 
   async function onClick(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
     try {
       await navigator.clipboard.writeText(text);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
     } catch {
-      // если clipboard недоступен — fallback через выделение
+      // Без secure context (http на не-localhost) clipboard API недоступен.
       const ta = document.createElement("textarea");
       ta.value = text;
       ta.style.position = "fixed";
@@ -23,9 +32,8 @@ export function CopyChip({ text, mono = true }: { text: string; mono?: boolean }
       ta.select();
       document.execCommand("copy");
       ta.remove();
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
     }
+    flash();
   }
 
   return (
@@ -51,12 +59,7 @@ export function CopyChipList({
   mono?: boolean;
 }) {
   if (!raw) return null;
-  const items = (typeof separator === "string"
-    ? raw.split(separator)
-    : raw.split(separator)
-  )
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const items = raw.split(separator as string).map((s) => s.trim()).filter(Boolean);
   if (items.length === 0) return null;
   return (
     <div className="chip-row">

@@ -15,11 +15,18 @@ export default async function Page({ params }: { params: Params }) {
   let listings: Listing[] = [];
   let loadError: ApiError | Error | null = null;
   try {
-    const all = await apiGet<OverviewRow[]>("/overview");
-    row = all.find((r) => r.smart_part_id === smart_part_id) ?? null;
-    if (row) {
-      listings = await apiGet<Listing[]>(`/listings?smart_part_id=${encodeURIComponent(smart_part_id)}`).catch(() => []);
-    }
+    // Сужаем overview запросом — q=smart_xxxxxxxx достанет одну строку,
+    // а listings грузим параллельно.
+    const [matches, foundListings] = await Promise.all([
+      apiGet<OverviewRow[]>(
+        `/overview?q=${encodeURIComponent(smart_part_id)}`,
+      ),
+      apiGet<Listing[]>(
+        `/listings?smart_part_id=${encodeURIComponent(smart_part_id)}`,
+      ).catch(() => [] as Listing[]),
+    ]);
+    row = matches.find((r) => r.smart_part_id === smart_part_id) ?? null;
+    listings = foundListings;
   } catch (e) {
     loadError = e as ApiError;
   }

@@ -211,7 +211,6 @@ async def export_overview(
         rows = await conn.fetch(sql, *params)
     rows = [dict(r) for r in rows]
 
-    # Раскладки — считаем максимальное количество элементов по выборке.
     def split_by_comma(value: str | None) -> list[str]:
         if not value:
             return []
@@ -222,20 +221,31 @@ async def export_overview(
             return []
         return value.split("\n")
 
-    articles_lists = [split_by_comma(r["articles_text"]) for r in rows]
-    active_num_lists = [split_by_comma(r["active_ebay_item_numbers"]) for r in rows]
-    active_com_lists = [split_by_newline(r["active_ebay_comments"]) for r in rows]
-    ended_num_lists = [split_by_comma(r["ended_ebay_item_numbers"]) for r in rows]
-    ended_com_lists = [split_by_newline(r["ended_ebay_comments"]) for r in rows]
+    # Раскладки считаем только под конкретный explode-флаг — иначе пустая работа.
+    articles_lists = [split_by_comma(r["articles_text"]) for r in rows] if explode_articles else []
     max_articles = max((len(x) for x in articles_lists), default=0)
-    max_active = max(
-        (max(len(n), len(c)) for n, c in zip(active_num_lists, active_com_lists)),
-        default=0,
-    )
-    max_ended = max(
-        (max(len(n), len(c)) for n, c in zip(ended_num_lists, ended_com_lists)),
-        default=0,
-    )
+
+    if explode_active_ebay:
+        active_num_lists = [split_by_comma(r["active_ebay_item_numbers"]) for r in rows]
+        active_com_lists = [split_by_newline(r["active_ebay_comments"]) for r in rows]
+        max_active = max(
+            (max(len(n), len(c)) for n, c in zip(active_num_lists, active_com_lists)),
+            default=0,
+        )
+    else:
+        active_num_lists = active_com_lists = []
+        max_active = 0
+
+    if explode_ended_ebay:
+        ended_num_lists = [split_by_comma(r["ended_ebay_item_numbers"]) for r in rows]
+        ended_com_lists = [split_by_newline(r["ended_ebay_comments"]) for r in rows]
+        max_ended = max(
+            (max(len(n), len(c)) for n, c in zip(ended_num_lists, ended_com_lists)),
+            default=0,
+        )
+    else:
+        ended_num_lists = ended_com_lists = []
+        max_ended = 0
 
     wb = Workbook(write_only=True)
     ws = wb.create_sheet("overview")
@@ -264,22 +274,22 @@ async def export_overview(
 
     for idx, r in enumerate(rows):
         line: list = []
-        articles = articles_lists[idx]
-        active_nums = active_num_lists[idx]
-        active_coms = active_com_lists[idx]
-        ended_nums = ended_num_lists[idx]
-        ended_coms = ended_com_lists[idx]
         for col in OVERVIEW_COLUMNS:
             if col == "articles_text" and explode_articles:
+                articles = articles_lists[idx]
                 for i in range(max_articles):
                     line.append(articles[i] if i < len(articles) else None)
             elif col == "active_ebay_item_numbers" and explode_active_ebay:
+                active_nums = active_num_lists[idx]
+                active_coms = active_com_lists[idx]
                 for i in range(max_active):
                     line.append(active_nums[i] if i < len(active_nums) else None)
                     line.append(active_coms[i] if i < len(active_coms) else None)
             elif col == "active_ebay_comments" and explode_active_ebay:
                 continue
             elif col == "ended_ebay_item_numbers" and explode_ended_ebay:
+                ended_nums = ended_num_lists[idx]
+                ended_coms = ended_com_lists[idx]
                 for i in range(max_ended):
                     line.append(ended_nums[i] if i < len(ended_nums) else None)
                     line.append(ended_coms[i] if i < len(ended_coms) else None)
