@@ -5,6 +5,7 @@ import { Search } from "lucide-react";
 import { apiGet, ApiError } from "../_lib/api";
 import { SmartSearchHit } from "../_lib/types";
 import { ErrorBox } from "./ErrorBox";
+import { CopyChipList } from "./CopyChip";
 
 export function SmartSearch({
   onPick,
@@ -96,7 +97,7 @@ export function SmartSearch({
                 <span className="badge badge-stocked">наличие: {h.stock_total_qty}</span>
               </div>
               <div className="title-md">{h.smart_name}</div>
-              {h.articles_text ? <div className="mono">{h.articles_text}</div> : null}
+              {h.articles_text ? <CopyChipList raw={h.articles_text} /> : null}
             </li>
           ))}
         </ul>

@@ -4,6 +4,7 @@ import { OverviewRow, Listing } from "../../_lib/types";
 import { TargetForm } from "../../_components/TargetForm";
 import { NewListingForm, ListingRow } from "../../_components/ListingForm";
 import { ErrorBox } from "../../_components/ErrorBox";
+import { CopyChip, CopyChipList } from "../../_components/CopyChip";
 
 type Params = Promise<{ smart_part_id: string }>;
 
@@ -61,10 +62,10 @@ export default async function Page({ params }: { params: Params }) {
         <div>
           <span className="caption-up">цель</span>
           <h1 className="display-md" style={{ marginTop: 4 }}>{row.smart_name}</h1>
-          <p className="body-md">
-            <span className="smart-id">{row.smart_part_id}</span>
-            {row.articles_text ? <span className="mono" style={{ marginLeft: 12 }}>{row.articles_text}</span> : null}
-          </p>
+          <div className="body-md" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+            <CopyChip text={row.smart_part_id} />
+            {row.articles_text ? <CopyChipList raw={row.articles_text} /> : null}
+          </div>
         </div>
         <div className="page-actions">
           <Link className="btn btn-secondary" href="/">К списку.</Link>

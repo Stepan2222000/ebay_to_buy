@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiSend, ApiError } from "../_lib/api";
 import { Listing } from "../_lib/types";
 import { ErrorBox } from "./ErrorBox";
+import { CopyChip } from "./CopyChip";
 
 export function NewListingForm({ smart_part_id }: { smart_part_id: string }) {
   const router = useRouter();
@@ -95,8 +96,8 @@ export function ListingRow({
     <div className="card" data-testid={`listing-${listing.id}`}>
       <div className="card-row">
         <div>
-          <div className="title-md">{listing.ebay_item_number}</div>
-          {listing.comment ? <div className="body-sm">{listing.comment}</div> : null}
+          <CopyChip text={listing.ebay_item_number} />
+          {listing.comment ? <div className="body-sm" style={{ marginTop: 8, color: "var(--on-dark-soft)" }}>{listing.comment}</div> : null}
         </div>
         <div className="page-actions">
           {listing.is_ended ? (

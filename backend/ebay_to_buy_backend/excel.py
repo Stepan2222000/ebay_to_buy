@@ -138,10 +138,24 @@ async def import_targets(pool: asyncpg.Pool, file_bytes: bytes) -> ImportResult:
 
 
 # [[Excel export#filters]] — фильтры на purchase_overview.
+SortKey = str  # 'needed-priority' | 'smart_part_id' | 'need_qty_desc' | 'created_desc'
+
+_ORDER_BY = {
+    "needed-priority": "active_ebay_count ASC, need_qty DESC, smart_part_id ASC",
+    "smart_part_id":   "smart_part_id ASC",
+    "need_qty_desc":   "need_qty DESC, smart_part_id ASC",
+    "created_desc":    "created_at DESC, smart_part_id ASC",
+}
+
+
 def _build_overview_query(
-    is_need: bool | None,
-    is_active: bool | None,
-    has_active_ebay: bool | None,
+    is_need: bool | None = None,
+    is_active: bool | None = None,
+    has_active_ebay: bool | None = None,
+    has_ended_ebay: bool | None = None,
+    q: str | None = None,
+    min_need_qty: int | None = None,
+    sort: SortKey = "smart_part_id",
 ) -> tuple[str, list]:
     where: list[str] = []
     params: list = []
@@ -152,14 +166,25 @@ def _build_overview_query(
         params.append(is_active)
         where.append(f"is_active = ${len(params)}")
     if has_active_ebay is not None:
-        if has_active_ebay:
-            where.append("active_ebay_count > 0")
-        else:
-            where.append("active_ebay_count = 0")
+        where.append("active_ebay_count > 0" if has_active_ebay else "active_ebay_count = 0")
+    if has_ended_ebay is not None:
+        where.append("ended_ebay_count > 0" if has_ended_ebay else "ended_ebay_count = 0")
+    if q and q.strip():
+        params.append(f"%{q.strip().lower()}%")
+        idx = len(params)
+        where.append(
+            f"(lower(smart_part_id) LIKE ${idx} "
+            f"OR lower(smart_name) LIKE ${idx} "
+            f"OR lower(coalesce(articles_text, '')) LIKE ${idx})"
+        )
+    if min_need_qty is not None and min_need_qty > 0:
+        params.append(min_need_qty)
+        where.append(f"need_qty >= ${len(params)}")
+
     sql = "SELECT * FROM purchase_overview"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY smart_part_id"
+    sql += " ORDER BY " + _ORDER_BY.get(sort, _ORDER_BY["smart_part_id"])
     return sql, params
 
 
@@ -169,11 +194,19 @@ async def export_overview(
     is_need: bool | None = None,
     is_active: bool | None = None,
     has_active_ebay: bool | None = None,
+    has_ended_ebay: bool | None = None,
+    q: str | None = None,
+    min_need_qty: int | None = None,
+    sort: SortKey = "smart_part_id",
     explode_articles: bool = False,
     explode_active_ebay: bool = False,
     explode_ended_ebay: bool = False,
 ) -> bytes:
-    sql, params = _build_overview_query(is_need, is_active, has_active_ebay)
+    sql, params = _build_overview_query(
+        is_need=is_need, is_active=is_active,
+        has_active_ebay=has_active_ebay, has_ended_ebay=has_ended_ebay,
+        q=q, min_need_qty=min_need_qty, sort=sort,
+    )
     async with pool.acquire() as conn:
         rows = await conn.fetch(sql, *params)
     rows = [dict(r) for r in rows]

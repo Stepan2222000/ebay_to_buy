@@ -70,6 +70,28 @@
   --sp-section: 96px;
 
   --shadow-coral-inset: inset 0 1.5px 0 rgba(186, 111, 48, 0.5);
+
+  color-scheme: dark;
+}
+
+/* Светлая тема — cream surface, ink text. По warm-editorial-design (marketing). */
+[data-theme="light"] {
+  --product-bg:            #faf9f5;
+  --product-sidebar:       #efe9de;
+  --product-input:         #ffffff;
+  --product-input-border:  #e6dfd8;
+  --product-stroke:        #e6dfd8;
+  --product-stroke-soft:   rgba(20, 20, 19, 0.06);
+  --product-overlay:       rgba(20, 20, 19, 0.04);
+
+  --on-dark:               #3d3d3a;
+  --on-dark-strong:        #141413;
+  --on-dark-soft:          #6c6a64;
+  --on-dark-faint:         #8e8b82;
+
+  --slate-900:             #ebe6df;
+
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; padding: 0; margin: 0; }
@@ -129,6 +151,21 @@ a { color: inherit; text-decoration: none; }
 }
 
 .app-nav { display: flex; gap: var(--sp-xs); margin-left: auto; }
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--on-dark-soft);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+.icon-btn:hover { background: var(--product-overlay); color: var(--on-dark-strong); }
 .app-nav-link {
   font-family: var(--font-sans);
   font-weight: 500;
@@ -395,4 +432,66 @@ a { color: inherit; text-decoration: none; }
   text-align: center;
   border: 1px dashed var(--product-stroke);
   border-radius: var(--radius-lg);
+}
+
+/* ---------- Copy chips ---------- */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.copy-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--product-input);
+  border: 1px solid var(--product-stroke);
+  color: var(--on-dark);
+  font-size: var(--body-xs-size);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.copy-chip.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.copy-chip:hover { background: var(--product-overlay); border-color: var(--product-input-border); color: var(--on-dark-strong); }
+.copy-chip.copied {
+  background: rgba(93, 184, 114, 0.15);
+  border-color: rgba(93, 184, 114, 0.5);
+  color: var(--success);
+}
+.copy-chip svg { flex-shrink: 0; }
+
+/* ---------- Search + sort + filter row ---------- */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-sm);
+  align-items: center;
+  margin-bottom: var(--sp-md);
+}
+.controls .input { max-width: 420px; }
+.controls .num-input { width: 130px; }
+
+.popover-wrap { position: relative; }
+.popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  background: var(--product-sidebar);
+  border: 1px solid var(--product-stroke);
+  border-radius: var(--radius-md);
+  padding: var(--sp-sm);
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.row-counts {
+  margin-top: var(--sp-sm);
+  font-size: var(--body-xs-size);
+  color: var(--on-dark-soft);
 }

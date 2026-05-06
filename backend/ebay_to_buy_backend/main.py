@@ -26,9 +26,17 @@ async def get_overview(
     is_need: bool | None = None,
     is_active: bool | None = None,
     has_active_ebay: bool | None = None,
+    has_ended_ebay: bool | None = None,
+    q: str | None = None,
+    min_need_qty: int | None = None,
+    sort: str = "smart_part_id",
     pool: asyncpg.Pool = Depends(get_pool),
 ) -> list[dict]:
-    sql, params = excel._build_overview_query(is_need, is_active, has_active_ebay)
+    sql, params = excel._build_overview_query(
+        is_need=is_need, is_active=is_active,
+        has_active_ebay=has_active_ebay, has_ended_ebay=has_ended_ebay,
+        q=q, min_need_qty=min_need_qty, sort=sort,
+    )
     async with pool.acquire() as conn:
         rows = await conn.fetch(sql, *params)
     return [dict(r) for r in rows]
@@ -229,6 +237,10 @@ async def export_xlsx(
     is_need: bool | None = None,
     is_active: bool | None = None,
     has_active_ebay: bool | None = None,
+    has_ended_ebay: bool | None = None,
+    q: str | None = None,
+    min_need_qty: int | None = None,
+    sort: str = "smart_part_id",
     explode_articles: bool = False,
     explode_active_ebay: bool = False,
     explode_ended_ebay: bool = False,
@@ -239,6 +251,10 @@ async def export_xlsx(
         is_need=is_need,
         is_active=is_active,
         has_active_ebay=has_active_ebay,
+        has_ended_ebay=has_ended_ebay,
+        q=q,
+        min_need_qty=min_need_qty,
+        sort=sort,
         explode_articles=explode_articles,
         explode_active_ebay=explode_active_ebay,
         explode_ended_ebay=explode_ended_ebay,

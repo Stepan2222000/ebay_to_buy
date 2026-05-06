@@ -34,6 +34,7 @@ frontend/screenshots/
 *.log
 *.sql.bak
 
-# Claude / Codex local skill caches
-.claude/skills/warm-editorial-design/uploads/
-.codex/skills/
+# Claude / Codex local skill caches — это локальные tool-каталоги
+.claude/
+.codex/
+.txt

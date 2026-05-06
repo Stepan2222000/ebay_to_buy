@@ -47,8 +47,18 @@ export type Listing = {
   updated_at: string;
 };
 
+export type SortKey =
+  | "needed-priority"
+  | "smart_part_id"
+  | "need_qty_desc"
+  | "created_desc";
+
 export type OverviewFilters = {
   is_need?: "true" | "false";
   is_active?: "true" | "false";
   has_active_ebay?: "true" | "false";
+  has_ended_ebay?: "true" | "false";
+  q?: string;
+  min_need_qty?: string;
+  sort?: SortKey;
 };

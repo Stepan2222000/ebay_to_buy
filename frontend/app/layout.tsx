@@ -2,6 +2,17 @@ import type { Metadata } from "next";
 import { Fraunces, Inter } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
+import { ThemeToggle } from "./_components/ThemeToggle";
+
+// Inline-скрипт: ставит data-theme до первой отрисовки, чтобы избежать FOUC.
+const themeBootstrap = `(() => {
+  try {
+    const t = localStorage.getItem("theme");
+    if (t === "light" || t === "dark") { document.documentElement.dataset.theme = t; return; }
+    document.documentElement.dataset.theme =
+      window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  } catch { document.documentElement.dataset.theme = "dark"; }
+})();`;
 
 const fraunces = Fraunces({
   variable: "--font-fraunces",
@@ -27,6 +38,9 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ru" className={`${fraunces.variable} ${inter.variable}`}>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+      </head>
       <body>
         <div className="app-shell">
           <header className="app-header">
@@ -35,6 +49,7 @@ export default function RootLayout({
               <Link href="/" className="app-nav-link">Все цели</Link>
               <Link href="/needed" className="app-nav-link">Нехватка</Link>
               <Link href="/targets/new" className="app-nav-link">Новая цель</Link>
+              <ThemeToggle />
             </nav>
           </header>
           {children}
