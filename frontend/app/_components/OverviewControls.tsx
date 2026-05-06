@@ -2,22 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Settings2, X } from "lucide-react";
+import { ArrowDownUp, Columns3, Search, X } from "lucide-react";
 import { OverviewFilters, SortKey } from "../_lib/types";
-import { ColumnKey, COL_LABELS } from "./overviewColumns";
+import { COL_LABELS, ColumnKey } from "./overviewColumns";
+import { Dropdown } from "./Dropdown";
 
-const TRISTATE: Array<{ key: keyof OverviewFilters; label: string }> = [
+const PILLS: Array<{ key: keyof OverviewFilters; label: string }> = [
   { key: "is_need",         label: "только нехватка" },
   { key: "is_active",       label: "только активные" },
   { key: "has_active_ebay", label: "есть активные eBay" },
   { key: "has_ended_ebay",  label: "есть снятые eBay" },
 ];
-
-const TRISTATE_NEXT: Record<string, string | undefined> = {
-  "":      "true",
-  "true":  "false",
-  "false": undefined,
-};
 
 const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
   { key: "needed-priority", label: "по приоритету закупки" },
@@ -33,7 +28,6 @@ export function OverviewControls({
   hiddenCols,
   onHiddenChange,
   enableHide,
-  totalRows,
   visibleRows,
 }: {
   basePath: string;
@@ -42,37 +36,32 @@ export function OverviewControls({
   hiddenCols: ColumnKey[];
   onHiddenChange: (next: ColumnKey[]) => void;
   enableHide: boolean;
-  totalRows?: number;
   visibleRows: number;
 }) {
   const router = useRouter();
   const [q, setQ] = useState(current.q ?? "");
-  const [minNeed, setMinNeed] = useState(current.min_need_qty ?? "");
-  const [colsOpen, setColsOpen] = useState(false);
-  const colsRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<number | null>(null);
 
-  // Синхронизируем локальные input-state с URL — иначе после навигации
-  // («Сброс.», переход по сортировке/пиллу) форма показывает старые значения.
+  // Debounced auto-apply поиска (300 мс). Никакой кнопки «Применить.».
   useEffect(() => {
-    setQ(current.q ?? "");
-    setMinNeed(current.min_need_qty ?? "");
-  }, [current.q, current.min_need_qty]);
-
-  // Закрываем popover при клике снаружи.
-  useEffect(() => {
-    if (!colsOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (colsRef.current && !colsRef.current.contains(e.target as Node)) {
-        setColsOpen(false);
-      }
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    const trimmed = q.trim();
+    if (trimmed === (current.q ?? "")) return;
+    debounceRef.current = window.setTimeout(() => {
+      pushWith({ q: trimmed || undefined });
+    }, 300);
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [colsOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+
+  // Синк локального input-state с URL после внешней навигации (Сброс., pill).
+  useEffect(() => { setQ(current.q ?? ""); }, [current.q]);
 
   function pushWith(updates: Partial<OverviewFilters>) {
-    const next: Record<string, string> = {};
     const merged: OverviewFilters = { ...current, ...updates };
+    const next: Record<string, string> = {};
     for (const k of Object.keys(merged) as Array<keyof OverviewFilters>) {
       const v = merged[k];
       if (v === undefined || v === "" || v === null) continue;
@@ -82,129 +71,133 @@ export function OverviewControls({
     router.push(qs ? `${basePath}?${qs}` : basePath);
   }
 
-  function cycleTristate(key: keyof OverviewFilters) {
-    const cur = (current[key] as string | undefined) ?? "";
-    const next = TRISTATE_NEXT[cur];
-    pushWith({ [key]: next as OverviewFilters[typeof key] });
-  }
-
-  function applySearch(e: React.FormEvent) {
-    e.preventDefault();
-    pushWith({ q: q.trim() || undefined, min_need_qty: minNeed || undefined });
+  function togglePill(key: keyof OverviewFilters) {
+    const cur = current[key] as string | undefined;
+    pushWith({ [key]: cur ? undefined : ("true" as OverviewFilters[typeof key]) });
   }
 
   function clearAll() {
     setQ("");
-    setMinNeed("");
     router.push(basePath);
   }
 
-  function toggleCol(col: ColumnKey, checked: boolean) {
-    const next = checked
-      ? hiddenCols.filter((c) => c !== col)
-      : [...hiddenCols, col];
-    onHiddenChange(next);
+  function setHidden(c: ColumnKey, visible: boolean) {
+    onHiddenChange(
+      visible ? hiddenCols.filter((x) => x !== c) : [...hiddenCols, c],
+    );
   }
 
+  const activeSort = current.sort ?? defaultSort;
+  const sortLabel = SORT_OPTIONS.find((o) => o.key === activeSort)?.label ?? "сортировка";
   const anyFilter =
-    Object.entries(current).some(([k, v]) =>
-      k !== "sort" && v !== undefined && v !== "",
-    ) || (current.sort && current.sort !== defaultSort);
+    Object.entries(current).some(([k, v]) => k !== "sort" && v !== undefined && v !== "") ||
+    (current.sort && current.sort !== defaultSort);
 
   return (
-    <div>
-      <div className="filter-row" role="group" aria-label="Фильтры">
-        {TRISTATE.map((t) => {
-          const v = current[t.key] as string | undefined;
-          const label = v === "false" ? `НЕ: ${t.label}` : t.label;
-          const negativeStyle = v === "false"
-            ? { color: "var(--error-product)", borderColor: "rgba(191,77,67,0.4)", background: "rgba(191,77,67,0.08)" }
-            : undefined;
-          return (
-            <button
-              key={String(t.key)}
-              type="button"
-              className={`filter-pill${v ? " active" : ""}`}
-              onClick={() => cycleTristate(t.key)}
-              data-testid={`pill-${String(t.key)}`}
-              data-state={v ?? ""}
-              style={negativeStyle}
-            >
-              {label}
+    <div className="toolbar">
+      <div className="toolbar-row">
+        <div className="toolbar-pills" role="group" aria-label="Фильтры">
+          {PILLS.map((p) => {
+            const active = current[p.key] === "true";
+            return (
+              <button
+                key={String(p.key)}
+                type="button"
+                className={`pill${active ? " active" : ""}`}
+                onClick={() => togglePill(p.key)}
+                data-testid={`pill-${String(p.key)}`}
+                aria-pressed={active}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+          {anyFilter ? (
+            <button type="button" className="pill pill-reset" onClick={clearAll}>
+              <X size={12} strokeWidth={2.5} /> сброс
             </button>
-          );
-        })}
-        {anyFilter ? (
-          <button type="button" className="filter-pill" onClick={clearAll}>
-            <X size={12} strokeWidth={2} /> Сброс.
-          </button>
-        ) : null}
-      </div>
+          ) : null}
+        </div>
 
-      <form className="controls" style={{ marginTop: 12 }} onSubmit={applySearch}>
-        <div className="search-wrap">
+        <div className="toolbar-search">
           <Search size={16} strokeWidth={2} />
           <input
-            className="input"
+            type="search"
+            className="toolbar-input"
             placeholder="Поиск по smart-артикулу, названию или артикулу"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             data-testid="overview-q"
           />
+          {q ? (
+            <button type="button" className="toolbar-search-clear" onClick={() => setQ("")} aria-label="Очистить">
+              <X size={14} strokeWidth={2} />
+            </button>
+          ) : null}
         </div>
-        <input
-          className="input num-input"
-          type="number"
-          min={0}
-          placeholder="мин. дефицит"
-          value={minNeed}
-          onChange={(e) => setMinNeed(e.target.value)}
-          data-testid="overview-min-need"
-        />
-        <button className="btn btn-secondary" type="submit">Применить.</button>
 
-        <select
-          className="select sort-select"
-          value={current.sort ?? defaultSort}
-          onChange={(e) => pushWith({ sort: e.target.value as SortKey })}
-          data-testid="overview-sort"
+        <Dropdown
+          icon={<ArrowDownUp size={14} strokeWidth={2} />}
+          label={sortLabel}
+          align="right"
+          width={260}
+          testId="sort-dropdown"
         >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.key} value={o.key}>{o.label}</option>
-          ))}
-        </select>
+          {(close) => (
+            <ul className="menu">
+              {SORT_OPTIONS.map((o) => (
+                <li key={o.key}>
+                  <button
+                    type="button"
+                    className={`menu-item${activeSort === o.key ? " active" : ""}`}
+                    onClick={() => { pushWith({ sort: o.key }); close(); }}
+                  >
+                    {o.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Dropdown>
 
         {enableHide ? (
-          <div className="popover-wrap" ref={colsRef}>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setColsOpen((v) => !v)}
-              data-testid="cols-toggle"
-            >
-              <Settings2 size={16} strokeWidth={2} /> Колонки.
-            </button>
-            {colsOpen ? (
-              <div className="popover">
-                <div className="caption-up" style={{ marginBottom: 4 }}>видимые колонки</div>
+          <Dropdown
+            icon={<Columns3 size={14} strokeWidth={2} />}
+            label="колонки"
+            align="right"
+            width={280}
+            testId="cols-dropdown"
+          >
+            {() => (
+              <div className="menu">
+                <div className="menu-header">
+                  <span className="caption-up">видимые колонки</span>
+                  <button
+                    type="button"
+                    className="menu-link"
+                    onClick={() => onHiddenChange([])}
+                  >
+                    показать все
+                  </button>
+                </div>
                 {(Object.keys(COL_LABELS) as ColumnKey[]).map((c) => (
-                  <label key={c} className="toggle">
+                  <label key={c} className="menu-toggle">
                     <input
                       type="checkbox"
                       checked={!hiddenCols.includes(c)}
-                      onChange={(e) => toggleCol(c, e.target.checked)}
+                      onChange={(e) => setHidden(c, e.target.checked)}
                     />
-                    {COL_LABELS[c]}
+                    <span>{COL_LABELS[c]}</span>
                   </label>
                 ))}
               </div>
-            ) : null}
-          </div>
+            )}
+          </Dropdown>
         ) : null}
-      </form>
+      </div>
 
-      <div className="row-counts" data-testid="row-counts">
-        Показано {visibleRows}{totalRows !== undefined && totalRows !== visibleRows ? ` из ${totalRows}` : ""}.
+      <div className="toolbar-counts" data-testid="row-counts">
+        Показано {visibleRows}.
       </div>
     </div>
   );
