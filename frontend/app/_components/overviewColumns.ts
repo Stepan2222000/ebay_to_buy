@@ -55,8 +55,8 @@ export const NUMERIC: Set<ColumnKey> = new Set([
 export const DEFAULT_WIDTH: Record<ColumnKey, number> = {
   smart_part_id:   150,
   smart_name:      260,
-  articles_text:   260,
-  ebay:            360,
+  articles_text:   300,
+  ebay:            480,
   target_qty:      80,
   stock_total_qty: 90,
   need_qty:        100,

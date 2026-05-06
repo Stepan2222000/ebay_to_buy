@@ -1,14 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download } from "lucide-react";
+import {
+  DndContext,
+  DragEndEvent,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { restrictToHorizontalAxis } from "@dnd-kit/modifiers";
+import {
+  SortableContext,
+  arrayMove,
+  horizontalListSortingStrategy,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
 import { OverviewRow, OverviewFilters, SortKey, Listing } from "../_lib/types";
 import { exportXlsxHref } from "../_lib/api";
-import { CopyChip, CopyChipList } from "./CopyChip";
+import { CopyChipList } from "./CopyChip";
 import { EbayCell } from "./EbayCell";
 import { OverviewControls } from "./OverviewControls";
-import { ALL_COLUMNS, COL_LABELS, ColumnKey, NUMERIC } from "./overviewColumns";
+import { SortableHeader } from "./SortableHeader";
+import { ALL_COLUMNS, COL_LABELS, ColumnKey, DEFAULT_WIDTH, NUMERIC } from "./overviewColumns";
+
+const MIN_WIDTH = 60;
 
 function formatTs(value: string | null | undefined) {
   if (!value) return "";
@@ -45,6 +64,38 @@ function renderCell(row: OverviewRow, col: ColumnKey, listings: Listing[]) {
   return raw === null || raw === undefined ? "" : String(raw);
 }
 
+function loadOrder(key: string | undefined): ColumnKey[] {
+  if (!key || typeof window === "undefined") return [...ALL_COLUMNS];
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [...ALL_COLUMNS];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [...ALL_COLUMNS];
+    const known = parsed.filter((c): c is ColumnKey => c in COL_LABELS);
+    const missing = ALL_COLUMNS.filter((c) => !known.includes(c));
+    return [...known, ...missing];
+  } catch {
+    return [...ALL_COLUMNS];
+  }
+}
+
+function loadSizes(key: string | undefined): Record<ColumnKey, number> {
+  const out: Record<ColumnKey, number> = { ...DEFAULT_WIDTH };
+  if (!key || typeof window === "undefined") return out;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return out;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      for (const c of ALL_COLUMNS) {
+        const v = (parsed as Record<string, unknown>)[c];
+        if (typeof v === "number" && v >= MIN_WIDTH && v < 1200) out[c] = v;
+      }
+    }
+  } catch { /* ignore */ }
+  return out;
+}
+
 export function OverviewTable({
   rows,
   listings,
@@ -55,6 +106,7 @@ export function OverviewTable({
   defaultSort,
   enableHide = false,
   hideStorageKey,
+  layoutStorageKey,
 }: {
   rows: OverviewRow[];
   listings: Listing[];
@@ -65,37 +117,119 @@ export function OverviewTable({
   defaultSort: SortKey;
   enableHide?: boolean;
   hideStorageKey?: string;
+  layoutStorageKey?: string;
 }) {
-  const [hiddenCols, setHiddenCols] = useState<ColumnKey[]>([]);
+  const orderKey   = layoutStorageKey ? `${layoutStorageKey}:order` : undefined;
+  const sizesKey   = layoutStorageKey ? `${layoutStorageKey}:sizes` : undefined;
 
+  const [hiddenCols, setHiddenCols] = useState<ColumnKey[]>([]);
+  const [order, setOrder] = useState<ColumnKey[]>([...ALL_COLUMNS]);
+  const [sizes, setSizes] = useState<Record<ColumnKey, number>>({ ...DEFAULT_WIDTH });
+
+  // Подгружаем persisted-состояние ТОЛЬКО на клиенте — иначе SSR/CSR mismatch.
   useEffect(() => {
-    if (!hideStorageKey) return;
-    try {
-      const raw = window.localStorage.getItem(hideStorageKey);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed))
-          setHiddenCols(parsed.filter((c) => c in COL_LABELS) as ColumnKey[]);
-      }
-    } catch { /* ignore */ }
-  }, [hideStorageKey]);
+    if (hideStorageKey) {
+      try {
+        const raw = window.localStorage.getItem(hideStorageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed))
+            setHiddenCols(parsed.filter((c) => c in COL_LABELS) as ColumnKey[]);
+        }
+      } catch { /* ignore */ }
+    }
+    setOrder(loadOrder(orderKey));
+    setSizes(loadSizes(sizesKey));
+  }, [hideStorageKey, orderKey, sizesKey]);
 
   function persistHidden(next: ColumnKey[]) {
     setHiddenCols(next);
-    if (hideStorageKey) {
-      window.localStorage.setItem(hideStorageKey, JSON.stringify(next));
-    }
+    if (hideStorageKey) window.localStorage.setItem(hideStorageKey, JSON.stringify(next));
+  }
+  function persistOrder(next: ColumnKey[]) {
+    setOrder(next);
+    if (orderKey) window.localStorage.setItem(orderKey, JSON.stringify(next));
+  }
+  function persistSizes(next: Record<ColumnKey, number>) {
+    setSizes(next);
+    if (sizesKey) window.localStorage.setItem(sizesKey, JSON.stringify(next));
   }
 
-  const visibleColumns = ALL_COLUMNS.filter((c) => !hiddenCols.includes(c));
+  function resetLayout() {
+    persistOrder([...ALL_COLUMNS]);
+    persistSizes({ ...DEFAULT_WIDTH });
+  }
+
+  // Resize column через mousedown/move/up.
+  // Финальная ширина хранится в ref-е, чтобы persist в onUp читал свежее значение.
+  const resizeRef = useRef<{
+    col: ColumnKey;
+    startX: number;
+    startW: number;
+    currentW: number;
+  } | null>(null);
+  const onResizeStart = useCallback((e: React.MouseEvent, col: ColumnKey) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startW = sizes[col] ?? DEFAULT_WIDTH[col];
+    resizeRef.current = { col, startX: e.clientX, startW, currentW: startW };
+    const onMove = (ev: MouseEvent) => {
+      const r = resizeRef.current;
+      if (!r) return;
+      const dx = ev.clientX - r.startX;
+      const next = Math.max(MIN_WIDTH, r.startW + dx);
+      r.currentW = next;
+      setSizes((prev) => ({ ...prev, [r.col]: next }));
+    };
+    const onUp = () => {
+      const r = resizeRef.current;
+      if (r && sizesKey) {
+        // Читаем актуальный sizes через функциональный setter, чтобы попасть
+        // в самую свежую копию state, и сразу сериализуем в localStorage.
+        setSizes((prev) => {
+          const merged = { ...prev, [r.col]: r.currentW };
+          window.localStorage.setItem(sizesKey, JSON.stringify(merged));
+          return merged;
+        });
+      }
+      resizeRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [sizes, sizesKey]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const oldIdx = order.indexOf(active.id as ColumnKey);
+    const newIdx = order.indexOf(over.id as ColumnKey);
+    if (oldIdx < 0 || newIdx < 0) return;
+    persistOrder(arrayMove(order, oldIdx, newIdx));
+  }
+
+  // Видимые колонки в текущем порядке.
+  const visibleColumns = useMemo(
+    () => order.filter((c) => !hiddenCols.includes(c)),
+    [order, hiddenCols],
+  );
 
   // Группируем listings по smart_part_id один раз.
-  const listingsBySmart = new Map<string, Listing[]>();
-  for (const l of listings) {
-    const arr = listingsBySmart.get(l.smart_part_id);
-    if (arr) arr.push(l);
-    else listingsBySmart.set(l.smart_part_id, [l]);
-  }
+  const listingsBySmart = useMemo(() => {
+    const m = new Map<string, Listing[]>();
+    for (const l of listings) {
+      const arr = m.get(l.smart_part_id);
+      if (arr) arr.push(l);
+      else m.set(l.smart_part_id, [l]);
+    }
+    return m;
+  }, [listings]);
 
   const exportQs = new URLSearchParams();
   for (const [k, v] of Object.entries(filters)) {
@@ -129,6 +263,7 @@ export function OverviewTable({
         hiddenCols={hiddenCols}
         onHiddenChange={persistHidden}
         enableHide={enableHide}
+        onResetLayout={layoutStorageKey ? resetLayout : undefined}
         visibleRows={rows.length}
       />
 
@@ -138,34 +273,51 @@ export function OverviewTable({
         </div>
       ) : (
         <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                {visibleColumns.map((c) => (
-                  <th
-                    key={c}
-                    className={`${NUMERIC.has(c) ? "num" : ""} col-${c.replace(/_/g, "-")}`}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            modifiers={[restrictToHorizontalAxis]}
+            onDragEnd={handleDragEnd}
+          >
+            <table className="table table-resizable">
+              <thead>
+                <tr>
+                  <SortableContext
+                    items={visibleColumns}
+                    strategy={horizontalListSortingStrategy}
                   >
-                    {COL_LABELS[c]}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.smart_part_id} className={r.is_active ? "" : "muted"}>
-                  {visibleColumns.map((c) => (
-                    <td
-                      key={c}
-                      className={`${NUMERIC.has(c) ? "num" : ""} col-${c.replace(/_/g, "-")}`}
-                    >
-                      {renderCell(r, c, listingsBySmart.get(r.smart_part_id) ?? [])}
-                    </td>
-                  ))}
+                    {visibleColumns.map((c, i) => (
+                      <SortableHeader
+                        key={c}
+                        id={c}
+                        className={NUMERIC.has(c) ? "num" : undefined}
+                        width={sizes[c] ?? DEFAULT_WIDTH[c]}
+                        onResizeStart={onResizeStart}
+                        isLast={i === visibleColumns.length - 1}
+                      >
+                        {COL_LABELS[c]}
+                      </SortableHeader>
+                    ))}
+                  </SortableContext>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.smart_part_id} className={r.is_active ? "" : "muted"}>
+                    {visibleColumns.map((c) => (
+                      <td
+                        key={c}
+                        className={NUMERIC.has(c) ? "num" : undefined}
+                        style={{ width: sizes[c] ?? DEFAULT_WIDTH[c] }}
+                      >
+                        {renderCell(r, c, listingsBySmart.get(r.smart_part_id) ?? [])}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </DndContext>
         </div>
       )}
     </main>

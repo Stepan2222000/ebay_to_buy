@@ -28,6 +28,7 @@ export default async function Page({ searchParams }: { searchParams: Search }) {
         defaultSort={DEFAULT_SORT}
         enableHide
         hideStorageKey="overview-needed:hidden-cols"
+        layoutStorageKey="overview-needed:layout"
       />
     );
   } catch (e) {

@@ -1,22 +1,22 @@
 "use client";
 
-import { Check, Copy, Plus, X } from "lucide-react";
+import { Check, Copy, Pencil, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiSend, ApiError } from "../_lib/api";
-import { Listing } from "../_lib/types";
+import { Listing, ListingPatch } from "../_lib/types";
 
-// Авто-grow textarea: высота подстраивается под scrollHeight (cap maxHeight).
-function useAutoGrow(value: string, ref: React.RefObject<HTMLTextAreaElement | null>, maxHeight = 200) {
+// Авто-grow textarea: высота под scrollHeight (max 220px).
+function useAutoGrow(value: string, ref: React.RefObject<HTMLTextAreaElement | null>) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, maxHeight) + "px";
+    el.style.height = Math.min(Math.max(el.scrollHeight, 28), 220) + "px";
   }, [value, ref]);
 }
 
-function CopyChipMini({ text }: { text: string }) {
+function NumChip({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<number | null>(null);
   useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
@@ -27,7 +27,7 @@ function CopyChipMini({ text }: { text: string }) {
       onClick={async (e) => {
         e.preventDefault();
         e.stopPropagation();
-        try { await navigator.clipboard.writeText(text); } catch { /* ignore */ }
+        try { await navigator.clipboard.writeText(text); } catch { /* fallback */ }
         setCopied(true);
         if (timer.current) window.clearTimeout(timer.current);
         timer.current = window.setTimeout(() => setCopied(false), 1500);
@@ -40,97 +40,155 @@ function CopyChipMini({ text }: { text: string }) {
   );
 }
 
-function ListingItem({ listing }: { listing: Listing }) {
+function NumberCell({ listing, onError }: { listing: Listing; onError: (m: string) => void }) {
   const router = useRouter();
-  const [comment, setComment] = useState(listing.comment ?? "");
   const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(listing.ebay_item_number);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const ref = useRef<HTMLTextAreaElement | null>(null);
-  useAutoGrow(editing ? comment : "", ref, 220);
 
-  // Синк со свежим listing.comment если бэкенд обновил.
-  useEffect(() => { setComment(listing.comment ?? ""); }, [listing.comment]);
+  useEffect(() => { setValue(listing.ebay_item_number); }, [listing.ebay_item_number]);
 
   async function save() {
-    const trimmed = comment.trim();
-    const original = (listing.comment ?? "").trim();
-    if (trimmed === original) { setEditing(false); return; }
+    const trimmed = value.trim();
+    if (trimmed === listing.ebay_item_number) { setEditing(false); return; }
+    if (!trimmed) { setValue(listing.ebay_item_number); setEditing(false); return; }
     setBusy(true);
-    setError(null);
     try {
-      await apiSend(`/listings/${listing.id}`, "PATCH", { comment: trimmed || null });
+      await apiSend(`/listings/${listing.id}`, "PATCH", { ebay_item_number: trimmed });
       setEditing(false);
       router.refresh();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : (e as Error).message);
+      onError(e instanceof ApiError ? e.message : (e as Error).message);
+      setValue(listing.ebay_item_number);
+      setEditing(false);
     } finally {
       setBusy(false);
     }
   }
 
-  function cancel() {
-    setComment(listing.comment ?? "");
-    setEditing(false);
-    setError(null);
+  if (editing) {
+    return (
+      <input
+        className="ebay-num-edit"
+        value={value}
+        autoFocus
+        disabled={busy}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { setValue(listing.ebay_item_number); setEditing(false); }
+          if (e.key === "Enter") { e.preventDefault(); save(); }
+        }}
+        onBlur={save}
+      />
+    );
   }
+  return (
+    <div className="ebay-num-wrap">
+      <NumChip text={listing.ebay_item_number} />
+      <button
+        type="button"
+        className="ebay-num-edit-btn"
+        onClick={() => setEditing(true)}
+        title="Редактировать номер."
+      >
+        <Pencil size={11} strokeWidth={2} />
+      </button>
+    </div>
+  );
+}
 
-  async function markEnded() {
+function CommentCell({ listing, onError }: { listing: Listing; onError: (m: string) => void }) {
+  const router = useRouter();
+  const [value, setValue] = useState(listing.comment ?? "");
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useAutoGrow(value, ref);
+
+  useEffect(() => {
+    setValue(listing.comment ?? "");
+    setDirty(false);
+  }, [listing.comment]);
+
+  async function save() {
+    if (!dirty) return;
+    const trimmed = value.trim();
+    const original = (listing.comment ?? "").trim();
+    if (trimmed === original) { setDirty(false); return; }
     setBusy(true);
-    setError(null);
     try {
-      await apiSend(`/listings/${listing.id}/end`, "POST");
+      await apiSend(`/listings/${listing.id}`, "PATCH", { comment: trimmed || null });
+      setDirty(false);
+      setSavedFlash(true);
+      window.setTimeout(() => setSavedFlash(false), 1200);
       router.refresh();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : (e as Error).message);
+      onError(e instanceof ApiError ? e.message : (e as Error).message);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className={`ebay-item${listing.is_ended ? " ended" : ""}`}>
-      <div className="ebay-item-head">
-        <CopyChipMini text={listing.ebay_item_number} />
-        {listing.is_ended ? (
-          <span className="ebay-tag">снято</span>
-        ) : (
-          <button
-            type="button"
-            className="ebay-end-btn"
-            onClick={markEnded}
-            disabled={busy}
-            title="Снять с публикации."
-          >
-            снять
-          </button>
-        )}
-      </div>
-      {editing ? (
-        <textarea
-          ref={ref}
-          className="ebay-comment editing"
-          value={comment}
-          autoFocus
-          placeholder="комментарий…"
-          onChange={(e) => setComment(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") { e.preventDefault(); cancel(); }
-            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
-          }}
-          onBlur={save}
-          disabled={busy}
-        />
-      ) : (
-        <button
-          type="button"
-          className="ebay-comment"
-          onClick={() => setEditing(true)}
-          title={listing.is_ended ? "Снято — комментарий read-only-ish, но можно поправить." : "Кликните, чтобы редактировать."}
-        >
-          {comment || <span className="ebay-comment-placeholder">+ комментарий</span>}
-        </button>
-      )}
+    <div className={`ebay-comment-wrap${savedFlash ? " saved" : ""}`}>
+      <textarea
+        ref={ref}
+        className="ebay-comment"
+        value={value}
+        rows={1}
+        placeholder="комментарий…"
+        disabled={busy}
+        onChange={(e) => { setValue(e.target.value); setDirty(true); }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { (e.target as HTMLTextAreaElement).blur(); }
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+        }}
+        onBlur={save}
+      />
+      {savedFlash ? <Check size={12} strokeWidth={2.5} className="ebay-saved-mark" /> : null}
+    </div>
+  );
+}
+
+function StatusToggle({ listing, onError }: { listing: Listing; onError: (m: string) => void }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
+  async function toggle() {
+    setBusy(true);
+    try {
+      const patch: ListingPatch = { is_ended: !listing.is_ended };
+      await apiSend(`/listings/${listing.id}`, "PATCH", patch);
+      router.refresh();
+    } catch (e) {
+      onError(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className={`ebay-status${listing.is_ended ? " is-ended" : " is-active"}`}
+      onClick={toggle}
+      disabled={busy}
+      title={listing.is_ended ? "Сейчас снято. Кликните, чтобы вернуть в активные." : "Сейчас активно. Кликните, чтобы пометить снятым."}
+    >
+      <span className="ebay-status-dot" />
+      <span>{listing.is_ended ? "снято" : "активно"}</span>
+    </button>
+  );
+}
+
+function ListingItem({ listing }: { listing: Listing }) {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className={`ebay-row${listing.is_ended ? " ended" : ""}`}>
+      <div className="ebay-row-num"><NumberCell listing={listing} onError={setError} /></div>
+      <div className="ebay-row-comment"><CommentCell listing={listing} onError={setError} /></div>
+      <div className="ebay-row-action"><StatusToggle listing={listing} onError={setError} /></div>
       {error ? <div className="ebay-err">{error}</div> : null}
     </div>
   );

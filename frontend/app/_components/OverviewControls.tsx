@@ -28,6 +28,7 @@ export function OverviewControls({
   hiddenCols,
   onHiddenChange,
   enableHide,
+  onResetLayout,
   visibleRows,
 }: {
   basePath: string;
@@ -36,6 +37,7 @@ export function OverviewControls({
   hiddenCols: ColumnKey[];
   onHiddenChange: (next: ColumnKey[]) => void;
   enableHide: boolean;
+  onResetLayout?: () => void;
   visibleRows: number;
 }) {
   const router = useRouter();
@@ -172,13 +174,25 @@ export function OverviewControls({
               <div className="menu">
                 <div className="menu-header">
                   <span className="caption-up">видимые колонки</span>
-                  <button
-                    type="button"
-                    className="menu-link"
-                    onClick={() => onHiddenChange([])}
-                  >
-                    показать все
-                  </button>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button
+                      type="button"
+                      className="menu-link"
+                      onClick={() => onHiddenChange([])}
+                    >
+                      показать все
+                    </button>
+                    {onResetLayout ? (
+                      <button
+                        type="button"
+                        className="menu-link"
+                        onClick={onResetLayout}
+                        title="Сбросить порядок и ширины колонок"
+                      >
+                        сбросить layout
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 {(Object.keys(COL_LABELS) as ColumnKey[]).map((c) => (
                   <label key={c} className="menu-toggle">
