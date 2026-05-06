@@ -1,5 +1,5 @@
 import { apiGet, ApiError } from "./_lib/api";
-import { OverviewRow, OverviewFilters, SortKey } from "./_lib/types";
+import { OverviewRow, OverviewFilters, SortKey, Listing } from "./_lib/types";
 import { buildQs, pickFilters } from "./_lib/filters";
 import { OverviewTable } from "./_components/OverviewTable";
 import { ErrorBox } from "./_components/ErrorBox";
@@ -13,15 +13,21 @@ export default async function Page({ searchParams }: { searchParams: Search }) {
   const filters = pickFilters(sp);
   const qs = buildQs(filters, DEFAULT_SORT);
   try {
-    const rows = await apiGet<OverviewRow[]>(`/overview${qs ? "?" + qs : ""}`);
+    const [rows, listings] = await Promise.all([
+      apiGet<OverviewRow[]>(`/overview${qs ? "?" + qs : ""}`),
+      apiGet<Listing[]>("/listings"),
+    ]);
     return (
       <OverviewTable
         rows={rows}
+        listings={listings}
         title="Список закупки."
         subtitle="Все цели по smart-артикулам и их eBay-объявления."
         filters={filters}
         basePath="/"
         defaultSort={DEFAULT_SORT}
+        enableHide
+        hideStorageKey="overview-all:hidden-cols"
       />
     );
   } catch (e) {

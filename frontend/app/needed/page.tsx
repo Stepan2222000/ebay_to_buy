@@ -1,5 +1,5 @@
 import { apiGet, ApiError } from "../_lib/api";
-import { OverviewRow, OverviewFilters, SortKey } from "../_lib/types";
+import { OverviewRow, OverviewFilters, SortKey, Listing } from "../_lib/types";
 import { buildQs, pickFilters } from "../_lib/filters";
 import { OverviewTable } from "../_components/OverviewTable";
 import { ErrorBox } from "../_components/ErrorBox";
@@ -10,14 +10,17 @@ type Search = Promise<Partial<Record<keyof OverviewFilters, string>>>;
 
 export default async function Page({ searchParams }: { searchParams: Search }) {
   const sp = await searchParams;
-  // На /needed по умолчанию is_need=true. Пользователь может переключить через tristate.
   const filters = pickFilters(sp, { is_need: "true" });
   const qs = buildQs(filters, DEFAULT_SORT);
   try {
-    const rows = await apiGet<OverviewRow[]>(`/overview?${qs}`);
+    const [rows, listings] = await Promise.all([
+      apiGet<OverviewRow[]>(`/overview?${qs}`),
+      apiGet<Listing[]>("/listings"),
+    ]);
     return (
       <OverviewTable
         rows={rows}
+        listings={listings}
         title="Нехватка."
         subtitle="Только цели с дефицитом. Сверху те, на которые ещё не писали продавцам, и где дефицит больше."
         filters={filters}

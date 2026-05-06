@@ -3,35 +3,28 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Download } from "lucide-react";
-import { OverviewRow, OverviewFilters, SortKey } from "../_lib/types";
+import { OverviewRow, OverviewFilters, SortKey, Listing } from "../_lib/types";
 import { exportXlsxHref } from "../_lib/api";
 import { CopyChip, CopyChipList } from "./CopyChip";
+import { EbayCell } from "./EbayCell";
 import { OverviewControls } from "./OverviewControls";
-import { COL_LABELS, ColumnKey, NUMERIC } from "./overviewColumns";
-
-const ALL_COLUMNS: ColumnKey[] = Object.keys(COL_LABELS) as ColumnKey[];
+import { ALL_COLUMNS, COL_LABELS, ColumnKey, NUMERIC } from "./overviewColumns";
 
 function formatTs(value: string | null | undefined) {
   if (!value) return "";
   return value.replace("T", " ").replace(/\.\d+Z?$/, "");
 }
 
-function renderCell(row: OverviewRow, col: ColumnKey) {
-  const raw = row[col];
+function renderCell(row: OverviewRow, col: ColumnKey, listings: Listing[]) {
+  const raw = row[col as keyof OverviewRow];
   if (col === "smart_part_id") {
     return <Link href={`/targets/${raw}`} className="smart-id">{String(raw)}</Link>;
   }
   if (col === "articles_text") {
     return <CopyChipList raw={String(raw ?? "")} />;
   }
-  if (col === "active_ebay_item_numbers" || col === "ended_ebay_item_numbers") {
-    return <CopyChipList raw={(raw as string | null) ?? ""} />;
-  }
-  if (col === "active_ebay_comments" || col === "ended_ebay_comments") {
-    if (!raw) return null;
-    return (
-      <div style={{ whiteSpace: "pre-line", color: "var(--on-dark-soft)" }}>{String(raw)}</div>
-    );
+  if (col === "ebay") {
+    return <EbayCell smart_part_id={row.smart_part_id} listings={listings} />;
   }
   if (col === "is_need") {
     return raw
@@ -54,6 +47,7 @@ function renderCell(row: OverviewRow, col: ColumnKey) {
 
 export function OverviewTable({
   rows,
+  listings,
   title,
   subtitle,
   filters,
@@ -63,6 +57,7 @@ export function OverviewTable({
   hideStorageKey,
 }: {
   rows: OverviewRow[];
+  listings: Listing[];
   title: string;
   subtitle?: string;
   filters: OverviewFilters;
@@ -79,7 +74,8 @@ export function OverviewTable({
       const raw = window.localStorage.getItem(hideStorageKey);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setHiddenCols(parsed.filter((c) => c in COL_LABELS) as ColumnKey[]);
+        if (Array.isArray(parsed))
+          setHiddenCols(parsed.filter((c) => c in COL_LABELS) as ColumnKey[]);
       }
     } catch { /* ignore */ }
   }, [hideStorageKey]);
@@ -92,6 +88,14 @@ export function OverviewTable({
   }
 
   const visibleColumns = ALL_COLUMNS.filter((c) => !hiddenCols.includes(c));
+
+  // Группируем listings по smart_part_id один раз.
+  const listingsBySmart = new Map<string, Listing[]>();
+  for (const l of listings) {
+    const arr = listingsBySmart.get(l.smart_part_id);
+    if (arr) arr.push(l);
+    else listingsBySmart.set(l.smart_part_id, [l]);
+  }
 
   const exportQs = new URLSearchParams();
   for (const [k, v] of Object.entries(filters)) {
@@ -138,7 +142,10 @@ export function OverviewTable({
             <thead>
               <tr>
                 {visibleColumns.map((c) => (
-                  <th key={c} className={NUMERIC.has(c) ? "num" : undefined}>
+                  <th
+                    key={c}
+                    className={`${NUMERIC.has(c) ? "num" : ""} col-${c.replace(/_/g, "-")}`}
+                  >
                     {COL_LABELS[c]}
                   </th>
                 ))}
@@ -146,10 +153,13 @@ export function OverviewTable({
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.smart_part_id} className={`row-link${r.is_active ? "" : " muted"}`}>
+                <tr key={r.smart_part_id} className={r.is_active ? "" : "muted"}>
                   {visibleColumns.map((c) => (
-                    <td key={c} className={NUMERIC.has(c) ? "num" : undefined}>
-                      {renderCell(r, c)}
+                    <td
+                      key={c}
+                      className={`${NUMERIC.has(c) ? "num" : ""} col-${c.replace(/_/g, "-")}`}
+                    >
+                      {renderCell(r, c, listingsBySmart.get(r.smart_part_id) ?? [])}
                     </td>
                   ))}
                 </tr>

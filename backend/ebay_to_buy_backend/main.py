@@ -140,20 +140,28 @@ class ListingPatchIn(BaseModel):
 
 @app.get("/listings")
 async def list_listings(
-    smart_part_id: str,
+    smart_part_id: str | None = None,
     pool: asyncpg.Pool = Depends(get_pool),
 ) -> list[dict]:
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
+    if smart_part_id is None:
+        sql = """
+            SELECT id, smart_part_id, ebay_item_number, comment, is_ended,
+                   created_at, updated_at
+            FROM ebay_listings
+            ORDER BY smart_part_id, created_at, id
+        """
+        params: list = []
+    else:
+        sql = """
             SELECT id, smart_part_id, ebay_item_number, comment, is_ended,
                    created_at, updated_at
             FROM ebay_listings
             WHERE smart_part_id = $1
             ORDER BY created_at, id
-            """,
-            smart_part_id,
-        )
+        """
+        params = [smart_part_id]
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(sql, *params)
     return [dict(r) for r in rows]
 
 

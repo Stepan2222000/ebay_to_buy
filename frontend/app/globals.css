@@ -676,3 +676,183 @@ input[type="number"].input::-webkit-inner-spin-button {
   font-size: var(--body-xs-size);
   color: var(--on-dark-soft);
 }
+
+/* ============================================================
+   EbayCell — объединённая колонка eBay-объявлений (inline-edit).
+   ============================================================ */
+
+.ebay-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ebay-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--product-stroke);
+  border-radius: var(--radius-sm);
+  background: var(--product-input);
+}
+.ebay-item.ended {
+  opacity: 0.7;
+  background: transparent;
+  border-color: var(--product-stroke-soft);
+}
+.ebay-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ebay-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--product-sidebar);
+  border: 1px solid var(--product-stroke);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--on-dark);
+  cursor: pointer;
+}
+.ebay-num:hover { background: var(--product-overlay); border-color: var(--product-input-border); color: var(--on-dark-strong); }
+.ebay-num.copied { background: rgba(93,184,114,0.15); border-color: rgba(93,184,114,0.5); color: var(--success); }
+
+.ebay-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--on-dark-soft);
+  background: var(--product-overlay);
+}
+.ebay-end-btn {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--on-dark-soft);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+.ebay-end-btn:hover { color: var(--error-product); background: rgba(191,77,67,0.1); }
+
+.ebay-comment {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--on-dark);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 4px 6px;
+  cursor: text;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-height: 22px;
+  resize: none;
+}
+.ebay-comment:hover { background: var(--product-overlay); border-color: var(--product-stroke); }
+.ebay-comment.editing {
+  border-color: var(--brand-coral);
+  box-shadow: 0 0 0 2px var(--brand-coral-soft);
+  background: var(--product-input);
+  outline: none;
+}
+.ebay-comment-placeholder {
+  color: var(--on-dark-faint);
+  font-style: italic;
+}
+
+.ebay-divider {
+  height: 1px;
+  background: var(--product-stroke);
+  margin: 2px 0;
+}
+
+.ebay-new {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px dashed var(--product-stroke);
+  border-radius: var(--radius-sm);
+  color: var(--on-dark-soft);
+}
+.ebay-new:focus-within { border-color: var(--brand-coral); color: var(--brand-coral); }
+.ebay-new-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--on-dark);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  outline: none;
+  padding: 0;
+}
+.ebay-new-input::placeholder { color: var(--on-dark-faint); }
+.ebay-new-clear {
+  background: transparent;
+  border: none;
+  color: var(--on-dark-soft);
+  cursor: pointer;
+  padding: 2px;
+}
+
+.ebay-err {
+  font-size: 11px;
+  color: var(--error-product);
+  white-space: pre-wrap;
+}
+
+/* Колонка eBay в таблице — фикс ширины */
+.col-ebay { width: 360px; min-width: 320px; }
+.col-articles { min-width: 240px; }
+
+/* DnD column reorder */
+.col-drag-handle {
+  cursor: grab;
+  color: var(--on-dark-faint);
+  margin-right: 4px;
+  display: inline-flex;
+  align-items: center;
+}
+.col-drag-handle:hover { color: var(--on-dark-strong); }
+th.is-dragging { background: var(--product-overlay); opacity: 0.6; }
+th.is-drop-target {
+  border-left: 2px solid var(--brand-coral) !important;
+}
+
+/* Resize handle справа от <th>. */
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 2;
+}
+.col-resizer::before {
+  content: "";
+  position: absolute;
+  inset: 6px 2px;
+  background: transparent;
+}
+.col-resizer:hover::before { background: var(--brand-coral); }
+.col-resizer.resizing::before { background: var(--brand-coral); }
+.table thead th { position: relative; }
+/* table-layout: fixed применяется только в режиме resize (через класс .table-resizable). */
+.table.table-resizable { table-layout: fixed; }

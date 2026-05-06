@@ -1,32 +1,67 @@
-import { OverviewRow } from "../_lib/types";
+// Все колонки overview в одном месте (порядок по умолчанию + подписи + flags).
+//
+// Объединённая «eBay» колонка заменяет 6 raw-полей backend:
+//   active_ebay_count / active_ebay_item_numbers / active_ebay_comments
+//   ended_ebay_count  / ended_ebay_item_numbers  / ended_ebay_comments
+// Inline-edit и создание объявлений живут внутри неё.
 
-// Человеческие подписи колонок (для шапки таблицы и popover-списка).
-export const COL_LABELS: Record<keyof OverviewRow, string> = {
-  smart_part_id:            "smart-артикул",
-  smart_name:               "название",
-  articles_text:            "артикулы",
-  target_qty:               "цель",
-  stock_total_qty:          "наличие",
-  need_qty:                 "не хватает",
-  is_need:                  "нехватка",
-  is_active:                "активная цель",
-  active_ebay_count:        "активных eBay",
-  active_ebay_item_numbers: "номера активных",
-  active_ebay_comments:     "комментарии активных",
-  ended_ebay_count:         "снятых eBay",
-  ended_ebay_item_numbers:  "номера снятых",
-  ended_ebay_comments:      "комментарии снятых",
-  created_at:               "создано",
-  updated_at:               "обновлено",
+export type ColumnKey =
+  | "smart_part_id"
+  | "smart_name"
+  | "articles_text"
+  | "ebay"
+  | "target_qty"
+  | "stock_total_qty"
+  | "need_qty"
+  | "is_need"
+  | "is_active"
+  | "created_at"
+  | "updated_at";
+
+export const ALL_COLUMNS: readonly ColumnKey[] = [
+  "smart_part_id",
+  "smart_name",
+  "articles_text",
+  "ebay",
+  "target_qty",
+  "stock_total_qty",
+  "need_qty",
+  "is_need",
+  "is_active",
+  "created_at",
+  "updated_at",
+];
+
+export const COL_LABELS: Record<ColumnKey, string> = {
+  smart_part_id:   "smart-артикул",
+  smart_name:      "название",
+  articles_text:   "артикулы",
+  ebay:            "eBay-объявления",
+  target_qty:      "цель",
+  stock_total_qty: "наличие",
+  need_qty:        "не хватает",
+  is_need:         "нехватка",
+  is_active:       "активная цель",
+  created_at:      "создано",
+  updated_at:      "обновлено",
 };
 
-export type ColumnKey = keyof OverviewRow;
-
-// Выравнивание чисел справа.
 export const NUMERIC: Set<ColumnKey> = new Set([
   "target_qty",
   "stock_total_qty",
   "need_qty",
-  "active_ebay_count",
-  "ended_ebay_count",
 ]);
+
+export const DEFAULT_WIDTH: Record<ColumnKey, number> = {
+  smart_part_id:   150,
+  smart_name:      260,
+  articles_text:   260,
+  ebay:            360,
+  target_qty:      80,
+  stock_total_qty: 90,
+  need_qty:        100,
+  is_need:         110,
+  is_active:       120,
+  created_at:      150,
+  updated_at:      150,
+};
