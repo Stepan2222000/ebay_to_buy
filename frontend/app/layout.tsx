@@ -14,9 +14,12 @@ const themeBootstrap = `(() => {
   } catch { document.documentElement.dataset.theme = "dark"; }
 })();`;
 
+// Fraunces поддерживает cyrillic в Google Fonts, но TS-типы next/font
+// перечисляют только latin/latin-ext/vietnamese. Латиницы достаточно —
+// для русских заголовков сработает fallback Georgia (тоже serif).
 const fraunces = Fraunces({
   variable: "--font-fraunces",
-  subsets: ["latin", "cyrillic"],
+  subsets: ["latin"],
   weight: ["400", "500"],
   display: "swap",
 });
