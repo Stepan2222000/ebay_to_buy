@@ -142,18 +142,13 @@ export function OverviewControls({
       </div>
 
       <form className="controls" style={{ marginTop: 12 }} onSubmit={applySearch}>
-        <div style={{ position: "relative", flex: 1, maxWidth: 480 }}>
-          <Search
-            size={16}
-            strokeWidth={2}
-            style={{ position: "absolute", left: 12, top: 11, color: "var(--on-dark-soft)" }}
-          />
+        <div className="search-wrap">
+          <Search size={16} strokeWidth={2} />
           <input
             className="input"
             placeholder="Поиск по smart-артикулу, названию или артикулу"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            style={{ paddingLeft: 36 }}
             data-testid="overview-q"
           />
         </div>
@@ -169,8 +164,7 @@ export function OverviewControls({
         <button className="btn btn-secondary" type="submit">Применить.</button>
 
         <select
-          className="select"
-          style={{ width: "auto" }}
+          className="select sort-select"
           value={current.sort ?? defaultSort}
           onChange={(e) => pushWith({ sort: e.target.value as SortKey })}
           data-testid="overview-sort"
