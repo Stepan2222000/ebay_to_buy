@@ -3,7 +3,17 @@
 import { Check, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-export function CopyChip({ text, mono = true }: { text: string; mono?: boolean }) {
+export function CopyChip({
+  text,
+  mono = true,
+  contacted = false,
+  onContact,
+}: {
+  text: string;
+  mono?: boolean;
+  contacted?: boolean;
+  onContact?: () => void;
+}) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<number | null>(null);
 
@@ -34,12 +44,15 @@ export function CopyChip({ text, mono = true }: { text: string; mono?: boolean }
       ta.remove();
     }
     flash();
+    onContact?.();
   }
 
   return (
     <button
       type="button"
-      className={`copy-chip${copied ? " copied" : ""}${mono ? " mono" : ""}`}
+      className={
+        `copy-chip${copied ? " copied" : ""}${contacted ? " contacted" : ""}${mono ? " mono" : ""}`
+      }
       onClick={onClick}
       title="Кликните, чтобы скопировать."
     >
@@ -53,10 +66,14 @@ export function CopyChipList({
   raw,
   separator = ", ",
   mono = true,
+  isContacted,
+  onContact,
 }: {
   raw: string | null | undefined;
   separator?: string | RegExp;
   mono?: boolean;
+  isContacted?: (text: string) => boolean;
+  onContact?: (text: string) => void;
 }) {
   if (!raw) return null;
   const items = raw.split(separator as string).map((s) => s.trim()).filter(Boolean);
@@ -64,7 +81,13 @@ export function CopyChipList({
   return (
     <div className="chip-row">
       {items.map((t, i) => (
-        <CopyChip key={`${t}-${i}`} text={t} mono={mono} />
+        <CopyChip
+          key={`${t}-${i}`}
+          text={t}
+          mono={mono}
+          contacted={isContacted?.(t) ?? false}
+          onContact={onContact ? () => onContact(t) : undefined}
+        />
       ))}
     </div>
   );

@@ -21,6 +21,7 @@ import {
 } from "@dnd-kit/sortable";
 import { OverviewRow, OverviewFilters, SortKey, Listing } from "../_lib/types";
 import { exportXlsxHref } from "../_lib/api";
+import { ActiveSelect } from "./ActiveSelect";
 import { CopyChipList } from "./CopyChip";
 import { EbayCell } from "./EbayCell";
 import { OverviewControls } from "./OverviewControls";
@@ -29,21 +30,104 @@ import { ALL_COLUMNS, COL_LABELS, ColumnKey, DEFAULT_WIDTH, NUMERIC } from "./ov
 
 const MIN_WIDTH = 60;
 
+// 7-дневная отметка «контактировал» по объявлению или артикулу.
+// Хранится в localStorage, показывается только когда включён contact-mode.
+const CONTACTED_KEY = "ebay:contacted";
+const CONTACTED_TTL = 7 * 24 * 60 * 60 * 1000;
+const CONTACT_MODE_KEY = "ebay:contact-mode";
+
+function pruneContacted(map: Record<string, number>): { next: Record<string, number>; dirty: boolean } {
+  const now = Date.now();
+  const next: Record<string, number> = {};
+  let dirty = false;
+  for (const [k, v] of Object.entries(map)) {
+    if (typeof v === "number" && now - v < CONTACTED_TTL) next[k] = v;
+    else dirty = true;
+  }
+  return { next, dirty };
+}
+
+function loadContacted(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(CONTACTED_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const { next, dirty } = pruneContacted(parsed as Record<string, number>);
+    if (dirty) window.localStorage.setItem(CONTACTED_KEY, JSON.stringify(next));
+    return next;
+  } catch { return {}; }
+}
+
 function formatTs(value: string | null | undefined) {
   if (!value) return "";
   return value.replace("T", " ").replace(/\.\d+Z?$/, "");
 }
 
-function renderCell(row: OverviewRow, col: ColumnKey, listings: Listing[]) {
+function listingContactKey(id: number) {
+  return `listing:${id}`;
+}
+
+function articleContactKey(smartPartId: string, article: string) {
+  return `article:${smartPartId}:${encodeURIComponent(article.trim())}`;
+}
+
+function splitArticles(raw: string | null | undefined) {
+  if (!raw) return [];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function isListingContacted(contactedMap: Record<string, number>, id: number) {
+  return !!contactedMap[listingContactKey(id)] || !!contactedMap[String(id)];
+}
+
+function isOverviewRowContacted(
+  row: OverviewRow,
+  listings: Listing[],
+  contactMode: boolean,
+  contactedMap: Record<string, number>,
+) {
+  if (!contactMode) return false;
+  if (listings.some((l) => isListingContacted(contactedMap, l.id))) return true;
+  return splitArticles(row.articles_text).some((article) =>
+    !!contactedMap[articleContactKey(row.smart_part_id, article)],
+  );
+}
+
+function renderCell(
+  row: OverviewRow,
+  col: ColumnKey,
+  listings: Listing[],
+  contactMode: boolean,
+  contactedMap: Record<string, number>,
+  onContact: (targetKey: string) => void,
+) {
   const raw = row[col as keyof OverviewRow];
   if (col === "smart_part_id") {
     return <Link href={`/targets/${raw}`} className="smart-id">{String(raw)}</Link>;
   }
   if (col === "articles_text") {
-    return <CopyChipList raw={String(raw ?? "")} />;
+    return (
+      <CopyChipList
+        raw={String(raw ?? "")}
+        isContacted={(article) =>
+          contactMode && !!contactedMap[articleContactKey(row.smart_part_id, article)]
+        }
+        onContact={(article) => onContact(articleContactKey(row.smart_part_id, article))}
+      />
+    );
   }
   if (col === "ebay") {
-    return <EbayCell smart_part_id={row.smart_part_id} listings={listings} />;
+    return (
+      <EbayCell
+        smart_part_id={row.smart_part_id}
+        listings={listings}
+        contactMode={contactMode}
+        contactedMap={contactedMap}
+        onContact={onContact}
+      />
+    );
   }
   if (col === "is_need") {
     return raw
@@ -51,9 +135,7 @@ function renderCell(row: OverviewRow, col: ColumnKey, listings: Listing[]) {
       : <span className="badge badge-stocked">в норме</span>;
   }
   if (col === "is_active") {
-    return raw
-      ? <span className="caption-up">активна</span>
-      : <span className="badge badge-paused">пауза</span>;
+    return <ActiveSelect smart_part_id={row.smart_part_id} is_active={Boolean(raw)} />;
   }
   if (col === "created_at" || col === "updated_at") {
     return <span className="mono">{formatTs(String(raw ?? ""))}</span>;
@@ -125,6 +207,8 @@ export function OverviewTable({
   const [hiddenCols, setHiddenCols] = useState<ColumnKey[]>([]);
   const [order, setOrder] = useState<ColumnKey[]>([...ALL_COLUMNS]);
   const [sizes, setSizes] = useState<Record<ColumnKey, number>>({ ...DEFAULT_WIDTH });
+  const [contactMode, setContactMode] = useState(false);
+  const [contactedMap, setContactedMap] = useState<Record<string, number>>({});
 
   // Подгружаем persisted-состояние ТОЛЬКО на клиенте — иначе SSR/CSR mismatch.
   useEffect(() => {
@@ -140,7 +224,39 @@ export function OverviewTable({
     }
     setOrder(loadOrder(orderKey));
     setSizes(loadSizes(sizesKey));
+    setContactMode(window.localStorage.getItem(CONTACT_MODE_KEY) === "on");
+    setContactedMap(loadContacted());
   }, [hideStorageKey, orderKey, sizesKey]);
+
+  // Раз в минуту перечитываем contactedMap, чтобы записи старше 7 дней
+  // ушли с экрана без перезагрузки страницы.
+  useEffect(() => {
+    const t = window.setInterval(() => setContactedMap(loadContacted()), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  function toggleContactMode() {
+    setContactMode((prev) => {
+      const next = !prev;
+      window.localStorage.setItem(CONTACT_MODE_KEY, next ? "on" : "off");
+      return next;
+    });
+  }
+
+  function onContact(targetKey: string) {
+    if (!contactMode) return;
+    setContactedMap((prev) => {
+      const next = { ...prev, [targetKey]: Date.now() };
+      window.localStorage.setItem(CONTACTED_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function resetContacts() {
+    if (!window.confirm("Сбросить все отметки контактов?")) return;
+    setContactedMap({});
+    window.localStorage.removeItem(CONTACTED_KEY);
+  }
 
   function persistHidden(next: ColumnKey[]) {
     setHiddenCols(next);
@@ -265,6 +381,9 @@ export function OverviewTable({
         enableHide={enableHide}
         onResetLayout={layoutStorageKey ? resetLayout : undefined}
         visibleRows={rows.length}
+        contactMode={contactMode}
+        onToggleContactMode={toggleContactMode}
+        onResetContacts={resetContacts}
       />
 
       {rows.length === 0 ? (
@@ -303,19 +422,35 @@ export function OverviewTable({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r.smart_part_id} className={r.is_active ? "" : "muted"}>
-                    {visibleColumns.map((c) => (
-                      <td
-                        key={c}
-                        className={NUMERIC.has(c) ? "num" : undefined}
-                        style={{ width: sizes[c] ?? DEFAULT_WIDTH[c] }}
-                      >
-                        {renderCell(r, c, listingsBySmart.get(r.smart_part_id) ?? [])}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                {rows.map((r) => {
+                  const rowListings = listingsBySmart.get(r.smart_part_id) ?? [];
+                  const rowClass = [
+                    r.is_active ? "" : "muted",
+                    isOverviewRowContacted(r, rowListings, contactMode, contactedMap)
+                      ? "contacted"
+                      : "",
+                  ].filter(Boolean).join(" ");
+                  return (
+                    <tr key={r.smart_part_id} className={rowClass}>
+                      {visibleColumns.map((c) => (
+                        <td
+                          key={c}
+                          className={NUMERIC.has(c) ? "num" : undefined}
+                          style={{ width: sizes[c] ?? DEFAULT_WIDTH[c] }}
+                        >
+                          {renderCell(
+                            r,
+                            c,
+                            rowListings,
+                            contactMode,
+                            contactedMap,
+                            onContact,
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </DndContext>

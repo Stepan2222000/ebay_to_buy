@@ -49,6 +49,8 @@ export type Listing = {
 
 export type ListingPatch = Partial<Pick<Listing, "ebay_item_number" | "comment" | "is_ended">>;
 
+export type TargetPatch = Partial<Pick<Target, "target_qty" | "is_active">>;
+
 export type SortKey =
   | "needed-priority"
   | "smart_part_id"

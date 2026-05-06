@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDownUp, Columns3, Search, X } from "lucide-react";
+import { ArrowDownUp, Columns3, RotateCcw, Search, Tag, X } from "lucide-react";
 import { OverviewFilters, SortKey } from "../_lib/types";
 import { COL_LABELS, ColumnKey } from "./overviewColumns";
 import { Dropdown } from "./Dropdown";
@@ -30,6 +30,9 @@ export function OverviewControls({
   enableHide,
   onResetLayout,
   visibleRows,
+  contactMode,
+  onToggleContactMode,
+  onResetContacts,
 }: {
   basePath: string;
   current: OverviewFilters;
@@ -39,6 +42,9 @@ export function OverviewControls({
   enableHide: boolean;
   onResetLayout?: () => void;
   visibleRows: number;
+  contactMode: boolean;
+  onToggleContactMode: () => void;
+  onResetContacts: () => void;
 }) {
   const router = useRouter();
   const [q, setQ] = useState(current.q ?? "");
@@ -117,6 +123,28 @@ export function OverviewControls({
           {anyFilter ? (
             <button type="button" className="pill pill-reset" onClick={clearAll}>
               <X size={12} strokeWidth={2.5} /> сброс
+            </button>
+          ) : null}
+
+          <button
+            type="button"
+            className={`pill pill-contact${contactMode ? " active" : ""}`}
+            onClick={onToggleContactMode}
+            title="Подсвечивать строку объявления, по которому вы скопировали номер за последние 7 дней"
+            aria-pressed={contactMode}
+            data-testid="pill-contact-mode"
+          >
+            <Tag size={12} strokeWidth={2} /> отмечать контакты
+          </button>
+          {contactMode ? (
+            <button
+              type="button"
+              className="pill pill-reset"
+              onClick={onResetContacts}
+              title="Очистить все отметки контактов"
+              data-testid="pill-reset-contacts"
+            >
+              <RotateCcw size={12} strokeWidth={2.5} /> сбросить отметки
             </button>
           ) : null}
         </div>

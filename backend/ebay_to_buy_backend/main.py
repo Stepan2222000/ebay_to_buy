@@ -234,6 +234,22 @@ async def end_listing(
     return Response(status_code=204)
 
 
+@app.delete("/listings/{listing_id}", status_code=204)
+async def delete_listing(
+    listing_id: int,
+    pool: asyncpg.Pool = Depends(get_pool),
+) -> Response:
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM ebay_listings WHERE id = $1",
+            listing_id,
+        )
+    # asyncpg возвращает 'DELETE n'
+    if result.endswith(" 0"):
+        raise HTTPException(status_code=404, detail=f"объявление {listing_id} не найдено")
+    return Response(status_code=204)
+
+
 # ---------- /export.xlsx, /import.xlsx ----------------------------------------
 
 
