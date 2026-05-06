@@ -279,20 +279,30 @@ a { color: inherit; text-decoration: none; }
   line-height: 1.5;
 }
 
-/* Прячем спинеры number-input — они съедают пространство placeholder. */
-input[type="number"].input { -moz-appearance: textfield; }
+/* Прячем спинеры number-input — они съедают placeholder и выглядят
+   неаккуратно на Safari macOS. Тут две техники сразу: появление через
+   appearance:textfield + display:none на webkit-кнопках. */
+input[type="number"].input {
+  appearance: textfield;
+  -moz-appearance: textfield;
+  -webkit-appearance: textfield;
+}
 input[type="number"].input::-webkit-outer-spin-button,
 input[type="number"].input::-webkit-inner-spin-button {
   -webkit-appearance: none;
+  appearance: none;
   margin: 0;
+  display: none;
 }
 
-/* Кастомный select без нативного chevron. Свой указатель — через background. */
+/* Кастомный select без нативного chevron (Safari иначе показывает свои
+   double-arrows справа). appearance:none + background-image со SVG. */
 .select {
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
   padding-right: 36px;
+  background-color: var(--product-input);
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238e8b82' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
   background-repeat: no-repeat;
   background-position: right 12px center;
@@ -508,9 +518,24 @@ input[type="number"].input::-webkit-inner-spin-button {
 .controls .input { max-width: 420px; }
 .controls .num-input { width: 180px; }
 .controls .sort-select { width: auto; min-width: 220px; }
-.controls .search-wrap { position: relative; flex: 1; min-width: 280px; max-width: 480px; }
-.controls .search-wrap > svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--on-dark-soft); pointer-events: none; }
-.controls .search-wrap > .input { padding-left: 36px; }
+
+.search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 280px;
+  max-width: 480px;
+  display: block;
+}
+.search-wrap > svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--on-dark-soft);
+  pointer-events: none;
+  z-index: 1;
+}
+.search-wrap > .input { padding-left: 36px; }
 
 .popover-wrap { position: relative; }
 .popover {
