@@ -54,7 +54,6 @@ export default function RootLayout({
             <Link href="/" className="app-wordmark">ebay to buy.</Link>
             <nav className="app-nav">
               <Link href="/" className="app-nav-link">Все цели</Link>
-              <Link href="/needed" className="app-nav-link">Нехватка</Link>
               <Link href="/targets/new" className="app-nav-link">Новая цель</Link>
               <ThemeToggle />
             </nav>
