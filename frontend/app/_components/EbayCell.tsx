@@ -519,12 +519,16 @@ export function EbayCell({
   contactMode,
   contactedMap,
   onContact,
+  rowContacted,
+  onClearRowContacts,
 }: {
   smart_part_id: string;
   listings: Listing[];
   contactMode: boolean;
   contactedMap: Record<string, number>;
   onContact: (targetKey: string) => void;
+  rowContacted: boolean;
+  onClearRowContacts: () => void;
 }) {
   const active = listings.filter((l) => !l.is_ended);
   const ended = listings.filter((l) => l.is_ended);
@@ -533,6 +537,19 @@ export function EbayCell({
     contactMode && (!!contactedMap[contactKey(id)] || !!contactedMap[String(id)]);
   return (
     <div className="ebay-cell">
+      {contactMode && rowContacted ? (
+        <div className="ebay-contact-tools">
+          <button
+            type="button"
+            className="ebay-clear-contact"
+            onClick={onClearRowContacts}
+            title="Снять контактную отметку со всей строки"
+          >
+            <X size={11} strokeWidth={2} />
+            <span>снять отметку</span>
+          </button>
+        </div>
+      ) : null}
       {active.map((l) => (
         <ListingItem
           key={l.id}

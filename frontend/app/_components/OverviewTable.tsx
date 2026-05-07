@@ -95,6 +95,18 @@ function isOverviewRowContacted(
   );
 }
 
+function contactKeysForOverviewRow(row: OverviewRow, listings: Listing[]) {
+  const keys = new Set<string>();
+  for (const article of splitArticles(row.articles_text)) {
+    keys.add(articleContactKey(row.smart_part_id, article));
+  }
+  for (const listing of listings) {
+    keys.add(listingContactKey(listing.id));
+    keys.add(String(listing.id));
+  }
+  return keys;
+}
+
 function renderCell(
   row: OverviewRow,
   col: ColumnKey,
@@ -102,6 +114,8 @@ function renderCell(
   contactMode: boolean,
   contactedMap: Record<string, number>,
   onContact: (targetKey: string) => void,
+  rowContacted: boolean,
+  onClearRowContacts: () => void,
 ) {
   const raw = row[col as keyof OverviewRow];
   if (col === "smart_part_id") {
@@ -126,6 +140,8 @@ function renderCell(
         contactMode={contactMode}
         contactedMap={contactedMap}
         onContact={onContact}
+        rowContacted={rowContacted}
+        onClearRowContacts={onClearRowContacts}
       />
     );
   }
@@ -256,6 +272,25 @@ export function OverviewTable({
     if (!window.confirm("Сбросить все отметки контактов?")) return;
     setContactedMap({});
     window.localStorage.removeItem(CONTACTED_KEY);
+  }
+
+  function clearRowContacts(row: OverviewRow, listings: Listing[]) {
+    const keys = contactKeysForOverviewRow(row, listings);
+    if (keys.size === 0) return;
+    setContactedMap((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const key of keys) {
+        if (key in next) {
+          delete next[key];
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      if (Object.keys(next).length === 0) window.localStorage.removeItem(CONTACTED_KEY);
+      else window.localStorage.setItem(CONTACTED_KEY, JSON.stringify(next));
+      return next;
+    });
   }
 
   function persistHidden(next: ColumnKey[]) {
@@ -424,11 +459,15 @@ export function OverviewTable({
               <tbody>
                 {rows.map((r) => {
                   const rowListings = listingsBySmart.get(r.smart_part_id) ?? [];
+                  const rowContacted = isOverviewRowContacted(
+                    r,
+                    rowListings,
+                    contactMode,
+                    contactedMap,
+                  );
                   const rowClass = [
                     r.is_active ? "" : "muted",
-                    isOverviewRowContacted(r, rowListings, contactMode, contactedMap)
-                      ? "contacted"
-                      : "",
+                    rowContacted ? "contacted" : "",
                   ].filter(Boolean).join(" ");
                   return (
                     <tr key={r.smart_part_id} className={rowClass}>
@@ -445,6 +484,8 @@ export function OverviewTable({
                             contactMode,
                             contactedMap,
                             onContact,
+                            rowContacted,
+                            () => clearRowContacts(r, rowListings),
                           )}
                         </td>
                       ))}
