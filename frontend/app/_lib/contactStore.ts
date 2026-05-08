@@ -76,6 +76,12 @@ function appendPending(op: PendingOp) {
   writePending([...readPending(), op]);
 }
 
+function sameOp(a: PendingOp, b: PendingOp): boolean {
+  if (a.op === "reset") return b.op === "reset" && a.ts === b.ts;
+  if (b.op === "reset") return false;
+  return a.op === b.op && a.ts === b.ts && a.key === b.key;
+}
+
 export function readMode(): boolean {
   if (typeof window === "undefined") return false;
   return window.localStorage.getItem(MODE_KEY) === "on";
@@ -125,8 +131,12 @@ async function tryPersist(op: PendingOp): Promise<boolean> {
 }
 
 export async function persistOrEnqueue(op: PendingOp): Promise<void> {
+  // Write-ahead: сначала в очередь, потом отправка. Параллельный syncWithDb
+  // увидит свежий op в pending и не затрёт оптимистичный UI snapshot'ом БД,
+  // в котором этой операции ещё нет.
+  appendPending(op);
   const ok = await tryPersist(op);
-  if (!ok) appendPending(op);
+  if (ok) writePending(readPending().filter((p) => !sameOp(p, op)));
 }
 
 export async function flushPending(): Promise<PendingOp[]> {
