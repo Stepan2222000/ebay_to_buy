@@ -26,7 +26,7 @@ import { exportXlsxHref } from "../_lib/api";
 import { articleContactKey, listingContactKey, splitArticles } from "../_lib/contactKeys";
 import {
   ContactCache, migrateLegacyCache, persistOrEnqueue, readCache, readMode,
-  syncWithDb, writeCache, writeMode,
+  shallowEqualMap, syncWithDb, writeCache, writeMode,
 } from "../_lib/contactStore";
 import { ActiveSelect } from "./ActiveSelect";
 import { CopyChipList } from "./CopyChip";
@@ -211,12 +211,14 @@ export function OverviewTable({
     setContactMode(readMode());
   }, [hideStorageKey, orderKey, sizesKey]);
 
-  // Mount + focus: фоновый sync с БД. UI уже отрисован из LS, эта работа невидима.
+  // Фоновый sync с БД. UI уже отрисован из LS — sync лишь догоняет изменения с других вкладок/браузеров.
+  // Если результат равен текущему состоянию — не дёргаем re-render всей таблицы.
   useEffect(() => {
     let cancelled = false;
     const sync = async () => {
       const merged = await syncWithDb();
-      if (!cancelled) setContactedMap(merged);
+      if (cancelled) return;
+      setContactedMap((prev) => (shallowEqualMap(prev, merged) ? prev : merged));
     };
     sync();
     const onFocus = () => sync();
@@ -259,15 +261,12 @@ export function OverviewTable({
   function clearRowContacts(row: OverviewRow, rowListings: Listing[]) {
     const keys = contactKeysForOverviewRow(row, rowListings);
     if (keys.size === 0) return;
+    const removed = [...keys].filter((k) => k in contactedMap);
+    if (removed.length === 0) return;
     const ts = Date.now();
-    let removed: string[] = [];
     setContactedMap((prev) => {
       const next: ContactCache = { ...prev };
-      removed = [];
-      for (const key of keys) {
-        if (key in next) { delete next[key]; removed.push(key); }
-      }
-      if (removed.length === 0) return prev;
+      for (const key of removed) delete next[key];
       writeCache(next);
       return next;
     });

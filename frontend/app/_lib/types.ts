@@ -56,8 +56,6 @@ export type ContactMark = {
   marked_at: string;
 };
 
-export type ContactModeValue = "on" | "off";
-
 export type SortKey =
   | "needed-priority"
   | "smart_part_id"

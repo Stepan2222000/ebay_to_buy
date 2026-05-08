@@ -8,15 +8,13 @@
 // при mount/focus подтягиваем `/contacts`, мерджим с локальным cache, применяя поверх pending-операции.
 // При успешной отправке pending — удаляем из очереди.
 
-import { ApiError, apiSend } from "./api";
+import { ApiError, apiGet, apiSend } from "./api";
 import { ContactMark } from "./types";
 
 const CACHE_KEY = "ebay:contacts-cache";
 const PENDING_KEY = "ebay:contacts-pending";
 const MODE_KEY = "ebay:contact-mode";
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export type ContactCache = Record<string, number>;
 
@@ -88,8 +86,6 @@ export function writeMode(value: boolean) {
   window.localStorage.setItem(MODE_KEY, value ? "on" : "off");
 }
 
-// Применяет pending-операции поверх базы (обычно — снимка из БД), формируя финальный cache.
-// Семантика: каждая pending-операция «переписывает» соответствующий ключ в base.
 export function applyPending(base: ContactCache, ops: PendingOp[]): ContactCache {
   const result: ContactCache = { ...base };
   for (const op of ops) {
@@ -104,7 +100,6 @@ export function applyPending(base: ContactCache, ops: PendingOp[]): ContactCache
   return result;
 }
 
-// Попытка сохранить операцию в БД; на сетевой сбой — кладём в pending.
 async function tryPersist(op: PendingOp): Promise<boolean> {
   try {
     if (op.op === "add") {
@@ -134,24 +129,18 @@ export async function persistOrEnqueue(op: PendingOp): Promise<void> {
   if (!ok) appendPending(op);
 }
 
-// Прогоняем очередь pending. Возвращаем те операции, что снова не прошли.
 export async function flushPending(): Promise<PendingOp[]> {
   const queue = readPending();
   if (queue.length === 0) return [];
-  const stillPending: PendingOp[] = [];
-  for (const op of queue) {
-    const ok = await tryPersist(op);
-    if (!ok) stillPending.push(op);
-  }
+  const results = await Promise.all(queue.map(tryPersist));
+  const stillPending = queue.filter((_, i) => !results[i]);
   writePending(stillPending);
   return stillPending;
 }
 
 export async function fetchContactsFromDb(): Promise<ContactCache | null> {
   try {
-    const res = await fetch(`${API}/contacts`, { cache: "no-store" });
-    if (!res.ok) return null;
-    const data = (await res.json()) as ContactMark[];
+    const data = await apiGet<ContactMark[]>("/contacts");
     const out: ContactCache = {};
     const now = Date.now();
     for (const m of data) {
@@ -164,21 +153,22 @@ export async function fetchContactsFromDb(): Promise<ContactCache | null> {
   }
 }
 
-// Выполняет полный sync-цикл: flush pending → GET DB → merge → write cache.
-// Возвращает результирующий cache (или текущий LS-cache, если БД недоступна).
 export async function syncWithDb(): Promise<ContactCache> {
   const stillPending = await flushPending();
   const db = await fetchContactsFromDb();
-  if (db === null) {
-    return readCache();
-  }
+  if (db === null) return readCache();
   const merged = applyPending(db, stillPending);
   writeCache(merged);
   return merged;
 }
 
-// Одноразовая миграция: если есть legacy `ebay:contacted` и нет нового cache —
-// переносим в cache. Не блокируем, можно пропустить если новый cache уже есть.
+export function shallowEqualMap(a: ContactCache, b: ContactCache): boolean {
+  const ak = Object.keys(a);
+  if (ak.length !== Object.keys(b).length) return false;
+  for (const k of ak) if (a[k] !== b[k]) return false;
+  return true;
+}
+
 export function migrateLegacyCache(): void {
   if (typeof window === "undefined") return;
   if (window.localStorage.getItem(CACHE_KEY)) return;
