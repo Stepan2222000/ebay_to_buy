@@ -4,6 +4,8 @@ import { Check, ChevronDown, Copy, Pencil, Plus, Trash2, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiSend, ApiError } from "../_lib/api";
+import { copyText } from "../_lib/clipboard";
+import { listingContactKey } from "../_lib/contactKeys";
 import { Listing, ListingPatch } from "../_lib/types";
 
 const PENDING_DELETE_KEY = "ebay:pending-delete";
@@ -15,7 +17,6 @@ type PendingDeleteEntry = {
   ebay_item_number?: string;
 };
 
-// Авто-grow textarea: высота под scrollHeight (max 200px).
 function useAutoGrow(value: string, ref: React.RefObject<HTMLTextAreaElement | null>) {
   useEffect(() => {
     const el = ref.current;
@@ -108,7 +109,7 @@ function NumberCell({
   async function copy(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    try { await navigator.clipboard.writeText(listing.ebay_item_number); } catch { /* ignore */ }
+    await copyText(listing.ebay_item_number);
     setCopied(true);
     onContact();
     if (copyTimer.current) window.clearTimeout(copyTimer.current);
@@ -532,9 +533,8 @@ export function EbayCell({
 }) {
   const active = listings.filter((l) => !l.is_ended);
   const ended = listings.filter((l) => l.is_ended);
-  const contactKey = (id: number) => `listing:${id}`;
   const isContacted = (id: number) =>
-    contactMode && (!!contactedMap[contactKey(id)] || !!contactedMap[String(id)]);
+    contactMode && (!!contactedMap[listingContactKey(id)] || !!contactedMap[String(id)]);
   return (
     <div className="ebay-cell">
       {contactMode && rowContacted ? (
@@ -556,7 +556,7 @@ export function EbayCell({
           listing={l}
           firstEnded={false}
           contacted={isContacted(l.id)}
-          onContact={() => onContact(contactKey(l.id))}
+          onContact={() => onContact(listingContactKey(l.id))}
         />
       ))}
       {ended.map((l, i) => (
@@ -565,7 +565,7 @@ export function EbayCell({
           listing={l}
           firstEnded={i === 0 && active.length > 0}
           contacted={isContacted(l.id)}
-          onContact={() => onContact(contactKey(l.id))}
+          onContact={() => onContact(listingContactKey(l.id))}
         />
       ))}
       <NewListingRow smart_part_id={smart_part_id} />

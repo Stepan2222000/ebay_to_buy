@@ -21,6 +21,7 @@ import {
 } from "@dnd-kit/sortable";
 import { OverviewRow, OverviewFilters, SortKey, Listing } from "../_lib/types";
 import { exportXlsxHref } from "../_lib/api";
+import { articleContactKey, listingContactKey, splitArticles } from "../_lib/contactKeys";
 import { ActiveSelect } from "./ActiveSelect";
 import { CopyChipList } from "./CopyChip";
 import { EbayCell } from "./EbayCell";
@@ -30,21 +31,24 @@ import { ALL_COLUMNS, COL_LABELS, ColumnKey, DEFAULT_WIDTH, NUMERIC } from "./ov
 
 const MIN_WIDTH = 60;
 
-// 7-дневная отметка «контактировал» по объявлению или артикулу.
-// Хранится в localStorage, показывается только когда включён contact-mode.
 const CONTACTED_KEY = "ebay:contacted";
 const CONTACTED_TTL = 7 * 24 * 60 * 60 * 1000;
 const CONTACT_MODE_KEY = "ebay:contact-mode";
 
-function pruneContacted(map: Record<string, number>): { next: Record<string, number>; dirty: boolean } {
+// Если ничего не пропало — возвращаем тот же объект, чтобы setState с шаллоу-сравнением
+// не дёргал re-render всей таблицы каждые 60 секунд.
+function pruneContacted(map: Record<string, number>): Record<string, number> {
   const now = Date.now();
-  const next: Record<string, number> = {};
   let dirty = false;
+  for (const v of Object.values(map)) {
+    if (typeof v !== "number" || now - v >= CONTACTED_TTL) { dirty = true; break; }
+  }
+  if (!dirty) return map;
+  const next: Record<string, number> = {};
   for (const [k, v] of Object.entries(map)) {
     if (typeof v === "number" && now - v < CONTACTED_TTL) next[k] = v;
-    else dirty = true;
   }
-  return { next, dirty };
+  return next;
 }
 
 function loadContacted(): Record<string, number> {
@@ -54,28 +58,22 @@ function loadContacted(): Record<string, number> {
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return {};
-    const { next, dirty } = pruneContacted(parsed as Record<string, number>);
-    if (dirty) window.localStorage.setItem(CONTACTED_KEY, JSON.stringify(next));
-    return next;
+    const pruned = pruneContacted(parsed as Record<string, number>);
+    if (pruned !== parsed) window.localStorage.setItem(CONTACTED_KEY, JSON.stringify(pruned));
+    return pruned;
   } catch { return {}; }
+}
+
+function shallowEqualMap(a: Record<string, number>, b: Record<string, number>) {
+  const ak = Object.keys(a);
+  if (ak.length !== Object.keys(b).length) return false;
+  for (const k of ak) if (a[k] !== b[k]) return false;
+  return true;
 }
 
 function formatTs(value: string | null | undefined) {
   if (!value) return "";
   return value.replace("T", " ").replace(/\.\d+Z?$/, "");
-}
-
-function listingContactKey(id: number) {
-  return `listing:${id}`;
-}
-
-function articleContactKey(smartPartId: string, article: string) {
-  return `article:${smartPartId}:${encodeURIComponent(article.trim())}`;
-}
-
-function splitArticles(raw: string | null | undefined) {
-  if (!raw) return [];
-  return raw.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
 function isListingContacted(contactedMap: Record<string, number>, id: number) {
@@ -226,7 +224,7 @@ export function OverviewTable({
   const [contactMode, setContactMode] = useState(false);
   const [contactedMap, setContactedMap] = useState<Record<string, number>>({});
 
-  // Подгружаем persisted-состояние ТОЛЬКО на клиенте — иначе SSR/CSR mismatch.
+  // Localstorage читаем только на клиенте — на SSR пусто, иначе hydration mismatch.
   useEffect(() => {
     if (hideStorageKey) {
       try {
@@ -244,10 +242,15 @@ export function OverviewTable({
     setContactedMap(loadContacted());
   }, [hideStorageKey, orderKey, sizesKey]);
 
-  // Раз в минуту перечитываем contactedMap, чтобы записи старше 7 дней
-  // ушли с экрана без перезагрузки страницы.
+  // Раз в минуту прорежаем устаревшие записи, чтобы метки сами уходили после 7 дней.
+  // Если ничего не изменилось — возвращаем prev, чтобы re-render всей таблицы не запускался.
   useEffect(() => {
-    const t = window.setInterval(() => setContactedMap(loadContacted()), 60_000);
+    const t = window.setInterval(() => {
+      setContactedMap((prev) => {
+        const fresh = loadContacted();
+        return shallowEqualMap(prev, fresh) ? prev : fresh;
+      });
+    }, 60_000);
     return () => window.clearInterval(t);
   }, []);
 
@@ -311,8 +314,8 @@ export function OverviewTable({
     persistSizes({ ...DEFAULT_WIDTH });
   }
 
-  // Resize column через mousedown/move/up.
-  // Финальная ширина хранится в ref-е, чтобы persist в onUp читал свежее значение.
+  // resize: финальная ширина хранится в ref-е, чтобы onUp видел свежее значение,
+  // а не замыкание на старый sizes.
   const resizeRef = useRef<{
     col: ColumnKey;
     startX: number;
@@ -335,8 +338,6 @@ export function OverviewTable({
     const onUp = () => {
       const r = resizeRef.current;
       if (r && sizesKey) {
-        // Читаем актуальный sizes через функциональный setter, чтобы попасть
-        // в самую свежую копию state, и сразу сериализуем в localStorage.
         setSizes((prev) => {
           const merged = { ...prev, [r.col]: r.currentW };
           window.localStorage.setItem(sizesKey, JSON.stringify(merged));
@@ -365,13 +366,11 @@ export function OverviewTable({
     persistOrder(arrayMove(order, oldIdx, newIdx));
   }
 
-  // Видимые колонки в текущем порядке.
   const visibleColumns = useMemo(
     () => order.filter((c) => !hiddenCols.includes(c)),
     [order, hiddenCols],
   );
 
-  // Группируем listings по smart_part_id один раз.
   const listingsBySmart = useMemo(() => {
     const m = new Map<string, Listing[]>();
     for (const l of listings) {

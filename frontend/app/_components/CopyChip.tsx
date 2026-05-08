@@ -2,6 +2,7 @@
 
 import { Check, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { copyText } from "../_lib/clipboard";
 
 export function CopyChip({
   text,
@@ -30,19 +31,7 @@ export function CopyChip({
   async function onClick(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // Без secure context (http на не-localhost) clipboard API недоступен.
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      ta.remove();
-    }
+    await copyText(text);
     flash();
     onContact?.();
   }
