@@ -1,3 +1,5 @@
+from typing import Literal
+
 import asyncpg
 from fastapi import Depends, FastAPI, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -248,6 +250,92 @@ async def delete_listing(
     if result.endswith(" 0"):
         raise HTTPException(status_code=404, detail=f"объявление {listing_id} не найдено")
     return Response(status_code=204)
+
+
+# ---------- /contacts (UI-метки 7 дней) --------------------------------------
+
+
+class ContactIn(BaseModel):
+    target_key: str = Field(min_length=1, max_length=512)
+
+
+@app.get("/contacts")
+async def list_contacts(pool: asyncpg.Pool = Depends(get_pool)) -> list[dict]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT target_key, marked_at FROM contact_marks "
+            "WHERE marked_at > now() - interval '7 days' "
+            "ORDER BY marked_at DESC"
+        )
+    return [dict(r) for r in rows]
+
+
+@app.post("/contacts")
+async def upsert_contact(
+    payload: ContactIn,
+    pool: asyncpg.Pool = Depends(get_pool),
+) -> dict:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO contact_marks (target_key, marked_at) "
+            "VALUES ($1, now()) "
+            "ON CONFLICT (target_key) DO UPDATE SET marked_at = now() "
+            "RETURNING target_key, marked_at",
+            payload.target_key,
+        )
+    return dict(row)
+
+
+@app.delete("/contacts", status_code=204)
+async def delete_all_contacts(pool: asyncpg.Pool = Depends(get_pool)) -> Response:
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM contact_marks")
+    return Response(status_code=204)
+
+
+@app.delete("/contacts/{target_key:path}", status_code=204)
+async def delete_contact(
+    target_key: str,
+    pool: asyncpg.Pool = Depends(get_pool),
+) -> Response:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM contact_marks WHERE target_key = $1",
+            target_key,
+        )
+    return Response(status_code=204)
+
+
+# ---------- /settings/contact-mode (одна строка app_settings) ----------------
+
+
+class ContactModeIn(BaseModel):
+    value: Literal["on", "off"]
+
+
+@app.get("/settings/contact-mode")
+async def get_contact_mode(pool: asyncpg.Pool = Depends(get_pool)) -> dict:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT value FROM app_settings WHERE key = 'contact-mode'"
+        )
+    return {"value": row["value"] if row else "off"}
+
+
+@app.put("/settings/contact-mode")
+async def set_contact_mode(
+    payload: ContactModeIn,
+    pool: asyncpg.Pool = Depends(get_pool),
+) -> dict:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO app_settings (key, value, updated_at) "
+            "VALUES ('contact-mode', $1, now()) "
+            "ON CONFLICT (key) DO UPDATE "
+            "SET value = EXCLUDED.value, updated_at = now()",
+            payload.value,
+        )
+    return {"value": payload.value}
 
 
 # ---------- /export.xlsx, /import.xlsx ----------------------------------------

@@ -19,10 +19,14 @@ import {
   horizontalListSortingStrategy,
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
-import { OverviewRow, OverviewFilters, SortKey, Listing } from "../_lib/types";
-import { exportXlsxHref } from "../_lib/api";
+import {
+  OverviewRow, OverviewFilters, SortKey, Listing,
+  ContactMark, ContactModeValue,
+} from "../_lib/types";
+import { ApiError, apiSend, exportXlsxHref } from "../_lib/api";
 import { articleContactKey, listingContactKey, splitArticles } from "../_lib/contactKeys";
 import { ActiveSelect } from "./ActiveSelect";
+import { ContactError } from "./ContactError";
 import { CopyChipList } from "./CopyChip";
 import { EbayCell } from "./EbayCell";
 import { OverviewControls } from "./OverviewControls";
@@ -31,44 +35,14 @@ import { ALL_COLUMNS, COL_LABELS, ColumnKey, DEFAULT_WIDTH, NUMERIC } from "./ov
 
 const MIN_WIDTH = 60;
 
-const CONTACTED_KEY = "ebay:contacted";
-const CONTACTED_TTL = 7 * 24 * 60 * 60 * 1000;
-const CONTACT_MODE_KEY = "ebay:contact-mode";
+const MIGRATED_FLAG = "ebay:migrated-to-db";
+const LEGACY_CONTACTED = "ebay:contacted";
+const LEGACY_CONTACT_MODE = "ebay:contact-mode";
 
-// Если ничего не пропало — возвращаем тот же объект, чтобы setState с шаллоу-сравнением
-// не дёргал re-render всей таблицы каждые 60 секунд.
-function pruneContacted(map: Record<string, number>): Record<string, number> {
-  const now = Date.now();
-  let dirty = false;
-  for (const v of Object.values(map)) {
-    if (typeof v !== "number" || now - v >= CONTACTED_TTL) { dirty = true; break; }
-  }
-  if (!dirty) return map;
-  const next: Record<string, number> = {};
-  for (const [k, v] of Object.entries(map)) {
-    if (typeof v === "number" && now - v < CONTACTED_TTL) next[k] = v;
-  }
-  return next;
-}
-
-function loadContacted(): Record<string, number> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(CONTACTED_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    const pruned = pruneContacted(parsed as Record<string, number>);
-    if (pruned !== parsed) window.localStorage.setItem(CONTACTED_KEY, JSON.stringify(pruned));
-    return pruned;
-  } catch { return {}; }
-}
-
-function shallowEqualMap(a: Record<string, number>, b: Record<string, number>) {
-  const ak = Object.keys(a);
-  if (ak.length !== Object.keys(b).length) return false;
-  for (const k of ak) if (a[k] !== b[k]) return false;
-  return true;
+function contactsToMap(items: ContactMark[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const it of items) out[it.target_key] = Date.parse(it.marked_at);
+  return out;
 }
 
 function formatTs(value: string | null | undefined) {
@@ -203,6 +177,8 @@ export function OverviewTable({
   enableHide = false,
   hideStorageKey,
   layoutStorageKey,
+  initialContacts,
+  initialContactMode,
 }: {
   rows: OverviewRow[];
   listings: Listing[];
@@ -214,6 +190,8 @@ export function OverviewTable({
   enableHide?: boolean;
   hideStorageKey?: string;
   layoutStorageKey?: string;
+  initialContacts: ContactMark[];
+  initialContactMode: ContactModeValue;
 }) {
   const orderKey   = layoutStorageKey ? `${layoutStorageKey}:order` : undefined;
   const sizesKey   = layoutStorageKey ? `${layoutStorageKey}:sizes` : undefined;
@@ -221,8 +199,15 @@ export function OverviewTable({
   const [hiddenCols, setHiddenCols] = useState<ColumnKey[]>([]);
   const [order, setOrder] = useState<ColumnKey[]>([...ALL_COLUMNS]);
   const [sizes, setSizes] = useState<Record<ColumnKey, number>>({ ...DEFAULT_WIDTH });
-  const [contactMode, setContactMode] = useState(false);
-  const [contactedMap, setContactedMap] = useState<Record<string, number>>({});
+  const [contactMode, setContactMode] = useState(initialContactMode === "on");
+  const [contactedMap, setContactedMap] = useState<Record<string, number>>(
+    () => contactsToMap(initialContacts),
+  );
+  const [contactError, setContactError] = useState<string | null>(null);
+
+  function showApiError(e: unknown, fallback: string) {
+    setContactError(e instanceof ApiError ? `${fallback}: ${e.message}` : fallback);
+  }
 
   // Localstorage читаем только на клиенте — на SSR пусто, иначе hydration mismatch.
   useEffect(() => {
@@ -238,62 +223,119 @@ export function OverviewTable({
     }
     setOrder(loadOrder(orderKey));
     setSizes(loadSizes(sizesKey));
-    setContactMode(window.localStorage.getItem(CONTACT_MODE_KEY) === "on");
-    setContactedMap(loadContacted());
   }, [hideStorageKey, orderKey, sizesKey]);
 
-  // Раз в минуту прорежаем устаревшие записи, чтобы метки сами уходили после 7 дней.
-  // Если ничего не изменилось — возвращаем prev, чтобы re-render всей таблицы не запускался.
+  // Одноразовая миграция localStorage → БД. После успеха ставим флаг и чистим старое.
   useEffect(() => {
-    const t = window.setInterval(() => {
-      setContactedMap((prev) => {
-        const fresh = loadContacted();
-        return shallowEqualMap(prev, fresh) ? prev : fresh;
-      });
-    }, 60_000);
-    return () => window.clearInterval(t);
+    if (window.localStorage.getItem(MIGRATED_FLAG) === "1") return;
+    const oldContacts = window.localStorage.getItem(LEGACY_CONTACTED);
+    const oldMode = window.localStorage.getItem(LEGACY_CONTACT_MODE);
+    if (!oldContacts && !oldMode) {
+      window.localStorage.setItem(MIGRATED_FLAG, "1");
+      return;
+    }
+    (async () => {
+      try {
+        if (oldContacts) {
+          const parsed = JSON.parse(oldContacts) as Record<string, unknown>;
+          const keys = Object.keys(parsed).filter((k) => typeof parsed[k] === "number");
+          await Promise.all(keys.map((k) =>
+            apiSend("/contacts", "POST", { target_key: k }),
+          ));
+        }
+        if (oldMode === "on" || oldMode === "off") {
+          await apiSend("/settings/contact-mode", "PUT", { value: oldMode });
+        }
+        window.localStorage.removeItem(LEGACY_CONTACTED);
+        window.localStorage.removeItem(LEGACY_CONTACT_MODE);
+        window.localStorage.setItem(MIGRATED_FLAG, "1");
+        const fresh = await (await fetch(
+          (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000") + "/contacts",
+          { cache: "no-store" },
+        )).json() as ContactMark[];
+        setContactedMap(contactsToMap(fresh));
+        if (oldMode === "on" || oldMode === "off") setContactMode(oldMode === "on");
+      } catch (e) {
+        // Миграция повторится в следующей сессии. Тосты тут не показываем,
+        // чтобы не пугать пользователя при offline-старте.
+        console.warn("contact migration failed", e);
+      }
+    })();
   }, []);
 
-  function toggleContactMode() {
-    setContactMode((prev) => {
-      const next = !prev;
-      window.localStorage.setItem(CONTACT_MODE_KEY, next ? "on" : "off");
-      return next;
-    });
+  // Refetch contacts при возврате во вкладку (multi-tab / multi-browser sync).
+  useEffect(() => {
+    const onFocus = async () => {
+      try {
+        const res = await fetch(
+          (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000") + "/contacts",
+          { cache: "no-store" },
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as ContactMark[];
+        setContactedMap(contactsToMap(data));
+      } catch { /* ignore — user will see it next focus */ }
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
+  async function toggleContactMode() {
+    const prev = contactMode;
+    const next = !prev;
+    setContactMode(next);
+    try {
+      await apiSend("/settings/contact-mode", "PUT", { value: next ? "on" : "off" });
+    } catch (e) {
+      setContactMode(prev);
+      showApiError(e, "Не удалось сохранить режим контактов");
+    }
   }
 
-  function onContact(targetKey: string) {
+  async function onContact(targetKey: string) {
     if (!contactMode) return;
-    setContactedMap((prev) => {
-      const next = { ...prev, [targetKey]: Date.now() };
-      window.localStorage.setItem(CONTACTED_KEY, JSON.stringify(next));
-      return next;
-    });
+    const prev = contactedMap;
+    setContactedMap({ ...prev, [targetKey]: Date.now() });
+    try {
+      await apiSend("/contacts", "POST", { target_key: targetKey });
+    } catch (e) {
+      setContactedMap(prev);
+      showApiError(e, "Не удалось сохранить отметку контакта");
+    }
   }
 
-  function resetContacts() {
+  async function resetContacts() {
     if (!window.confirm("Сбросить все отметки контактов?")) return;
+    const prev = contactedMap;
     setContactedMap({});
-    window.localStorage.removeItem(CONTACTED_KEY);
+    try {
+      await apiSend("/contacts", "DELETE");
+    } catch (e) {
+      setContactedMap(prev);
+      showApiError(e, "Не удалось сбросить отметки");
+    }
   }
 
-  function clearRowContacts(row: OverviewRow, listings: Listing[]) {
-    const keys = contactKeysForOverviewRow(row, listings);
+  async function clearRowContacts(row: OverviewRow, rowListings: Listing[]) {
+    const keys = contactKeysForOverviewRow(row, rowListings);
     if (keys.size === 0) return;
-    setContactedMap((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      for (const key of keys) {
-        if (key in next) {
-          delete next[key];
-          changed = true;
-        }
-      }
-      if (!changed) return prev;
-      if (Object.keys(next).length === 0) window.localStorage.removeItem(CONTACTED_KEY);
-      else window.localStorage.setItem(CONTACTED_KEY, JSON.stringify(next));
-      return next;
-    });
+    const prev = contactedMap;
+    const next: Record<string, number> = { ...prev };
+    let changed = false;
+    for (const key of keys) {
+      if (key in next) { delete next[key]; changed = true; }
+    }
+    if (!changed) return;
+    setContactedMap(next);
+    try {
+      await Promise.all([...keys]
+        .filter((k) => k in prev)
+        .map((k) => apiSend(`/contacts/${encodeURIComponent(k)}`, "DELETE")),
+      );
+    } catch (e) {
+      setContactedMap(prev);
+      showApiError(e, "Не удалось снять отметку строки");
+    }
   }
 
   function persistHidden(next: ColumnKey[]) {
@@ -496,6 +538,7 @@ export function OverviewTable({
           </DndContext>
         </div>
       )}
+      <ContactError message={contactError} onDismiss={() => setContactError(null)} />
     </main>
   );
 }

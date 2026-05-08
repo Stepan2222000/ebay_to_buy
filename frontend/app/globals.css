@@ -1085,3 +1085,45 @@ th.is-drop-target {
 .table thead th { position: relative; }
 /* table-layout: fixed применяется только в режиме resize (через класс .table-resizable). */
 .table.table-resizable { table-layout: fixed; }
+
+/* ============================================================
+   Toast: ошибки сетевых запросов по контактам.
+   ============================================================ */
+.contact-error {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 100;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 420px;
+  padding: 8px 10px 8px 12px;
+  background: var(--product-sidebar);
+  color: var(--error-product);
+  border: 1px solid rgba(191, 77, 67, 0.4);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.4;
+  animation: contact-error-in 180ms ease-out;
+}
+@keyframes contact-error-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.contact-error-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 4px;
+  background: transparent;
+  border: none;
+  color: var(--on-dark-soft);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.contact-error-close:hover { background: var(--product-overlay); color: var(--on-dark-strong); }

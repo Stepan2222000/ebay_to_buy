@@ -217,4 +217,30 @@ GROUP BY
 COMMENT ON VIEW purchase_overview IS
     'Главная вьюха ebay_to_buy: цели + наличие из parts_uchet.stock_raw + агрегаты по eBay-объявлениям. См. purchase-logic.yaml [[purchase_overview]].';
 
+-- =============================================================================
+-- SECTION 7. UI state — отметки контактов и однотумблерные настройки
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS contact_marks (
+    target_key text PRIMARY KEY,
+    marked_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS contact_marks_marked_at_idx
+    ON contact_marks (marked_at DESC);
+
+COMMENT ON TABLE contact_marks IS
+    'UI-метки «контактировал по этому таргету» с TTL 7 дней (фильтр на read). target_key — ''listing:<id>'' или ''article:<smart_part_id>:<encoded>''.';
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key        text PRIMARY KEY,
+    value      text NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO app_settings (key, value) VALUES ('contact-mode', 'off')
+    ON CONFLICT (key) DO NOTHING;
+
+COMMENT ON TABLE app_settings IS
+    'Однострочные UI-настройки приложения. Сейчас: contact-mode=on|off для подсветки контактных меток.';
+
 COMMIT;

@@ -51,6 +51,13 @@ export type ListingPatch = Partial<Pick<Listing, "ebay_item_number" | "comment" 
 
 export type TargetPatch = Partial<Pick<Target, "target_qty" | "is_active">>;
 
+export type ContactMark = {
+  target_key: string;
+  marked_at: string;
+};
+
+export type ContactModeValue = "on" | "off";
+
 export type SortKey =
   | "needed-priority"
   | "smart_part_id"
