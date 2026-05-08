@@ -1,0 +1,29 @@
+services:
+  backend:
+    image: ghcr.io/stepan2222000/ebay-to-buy-backend:${IMAGE_TAG:-latest}
+    container_name: ebay_to_buy_app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://admin:Password123@ebay_to_buy:5432/ebay_to_buy
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: "8000"
+      CORS_ORIGINS: http://2.26.53.128:3000
+    networks:
+      - db_default
+
+  frontend:
+    image: ghcr.io/stepan2222000/ebay-to-buy-frontend:${IMAGE_TAG:-latest}
+    container_name: ebay_to_buy_web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - db_default
+
+networks:
+  db_default:
+    external: true
