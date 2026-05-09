@@ -123,7 +123,7 @@ async function pushSnapshot(cache: ContactCache): Promise<boolean> {
   }
 }
 
-export async function flushIfDirty(): Promise<void> {
+async function flushIfDirty(): Promise<void> {
   if (!isDirty()) return;
   const ok = await pushSnapshot(readCache());
   if (ok) clearDirty();

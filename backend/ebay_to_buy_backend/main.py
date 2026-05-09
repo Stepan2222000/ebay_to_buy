@@ -256,8 +256,9 @@ async def delete_listing(
 # ---------- /contacts (UI-метки 7 дней) --------------------------------------
 
 
-class ContactIn(BaseModel):
+class ContactBulkItem(BaseModel):
     target_key: str = Field(min_length=1, max_length=512)
+    marked_at: dt.datetime
 
 
 @app.get("/contacts")
@@ -269,27 +270,6 @@ async def list_contacts(pool: asyncpg.Pool = Depends(get_pool)) -> list[dict]:
             "ORDER BY marked_at DESC"
         )
     return [dict(r) for r in rows]
-
-
-@app.post("/contacts")
-async def upsert_contact(
-    payload: ContactIn,
-    pool: asyncpg.Pool = Depends(get_pool),
-) -> dict:
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "INSERT INTO contact_marks (target_key, marked_at) "
-            "VALUES ($1, now()) "
-            "ON CONFLICT (target_key) DO UPDATE SET marked_at = now() "
-            "RETURNING target_key, marked_at",
-            payload.target_key,
-        )
-    return dict(row)
-
-
-class ContactBulkItem(BaseModel):
-    target_key: str = Field(min_length=1, max_length=512)
-    marked_at: dt.datetime
 
 
 @app.put("/contacts/bulk")
@@ -317,19 +297,6 @@ async def replace_contacts(
 async def delete_all_contacts(pool: asyncpg.Pool = Depends(get_pool)) -> Response:
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM contact_marks")
-    return Response(status_code=204)
-
-
-@app.delete("/contacts/{target_key:path}", status_code=204)
-async def delete_contact(
-    target_key: str,
-    pool: asyncpg.Pool = Depends(get_pool),
-) -> Response:
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "DELETE FROM contact_marks WHERE target_key = $1",
-            target_key,
-        )
     return Response(status_code=204)
 
 
