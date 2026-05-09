@@ -25,8 +25,8 @@ import {
 import { exportXlsxHref } from "../_lib/api";
 import { articleContactKey, listingContactKey, splitArticles } from "../_lib/contactKeys";
 import {
-  ContactCache, migrateLegacyCache, persistOrEnqueue, readCache, readMode,
-  shallowEqualMap, syncWithDb, writeCache, writeMode,
+  ContactCache, bootstrapFromDb, readCache, readMode, resetAll,
+  startSyncLoop, subscribeCache, writeCache, writeMode,
 } from "../_lib/contactStore";
 import { ActiveSelect } from "./ActiveSelect";
 import { CopyChipList } from "./CopyChip";
@@ -192,7 +192,8 @@ export function OverviewTable({
   const [contactMode, setContactMode] = useState(false);
   const [contactedMap, setContactedMap] = useState<ContactCache>({});
 
-  // Mount: читаем LS-кеш и сразу рендерим. Без сетевых запросов в этом шаге.
+  // Mount: читаем LS, подписываемся на изменения (own tab + другие вкладки),
+  // если LS пуст — единожды подтягиваем из БД (cold start). Никаких merge'ей.
   useEffect(() => {
     if (hideStorageKey) {
       try {
@@ -206,28 +207,20 @@ export function OverviewTable({
     }
     setOrder(loadOrder(orderKey));
     setSizes(loadSizes(sizesKey));
-    migrateLegacyCache();
     setContactedMap(readCache());
     setContactMode(readMode());
+
+    const unsub = subscribeCache(() => setContactedMap(readCache()));
+    void bootstrapFromDb().then((cache) => {
+      // bootstrap пишет в LS сам; subscribe ловит эвент и обновит state
+      if (Object.keys(cache).length > 0) setContactedMap(cache);
+    });
+    return unsub;
   }, [hideStorageKey, orderKey, sizesKey]);
 
-  // Фоновый sync с БД. UI уже отрисован из LS — sync лишь догоняет изменения с других вкладок/браузеров.
-  // Если результат равен текущему состоянию — не дёргаем re-render всей таблицы.
-  useEffect(() => {
-    let cancelled = false;
-    const sync = async () => {
-      const merged = await syncWithDb();
-      if (cancelled) return;
-      setContactedMap((prev) => (shallowEqualMap(prev, merged) ? prev : merged));
-    };
-    sync();
-    const onFocus = () => sync();
-    window.addEventListener("focus", onFocus);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("focus", onFocus);
-    };
-  }, []);
+  // Один на всё приложение sync-loop: лидер-таб шлёт PUT /contacts/bulk раз в минуту,
+  // на visibilitychange:hidden и pagehide дописывает через fetch keepalive.
+  useEffect(() => startSyncLoop(), []);
 
   function toggleContactMode() {
     setContactMode((prev) => {
@@ -239,40 +232,32 @@ export function OverviewTable({
 
   function onContact(targetKey: string) {
     if (!contactMode) return;
-    const ts = Date.now();
-    setContactedMap((prev) => {
-      const next = { ...prev, [targetKey]: ts };
-      writeCache(next);
-      return next;
-    });
-    void persistOrEnqueue({ op: "add", key: targetKey, ts });
+    const next = { ...readCache(), [targetKey]: Date.now() };
+    writeCache(next);
+    setContactedMap(next);
   }
 
   function resetContacts() {
     if (!window.confirm("Сбросить все отметки контактов?")) return;
-    const ts = Date.now();
-    setContactedMap(() => {
-      writeCache({});
-      return {};
-    });
-    void persistOrEnqueue({ op: "reset", ts });
+    setContactedMap({});
+    void resetAll();
   }
 
   function clearRowContacts(row: OverviewRow, rowListings: Listing[]) {
     const keys = contactKeysForOverviewRow(row, rowListings);
     if (keys.size === 0) return;
-    const removed = [...keys].filter((k) => k in contactedMap);
-    if (removed.length === 0) return;
-    const ts = Date.now();
-    setContactedMap((prev) => {
-      const next: ContactCache = { ...prev };
-      for (const key of removed) delete next[key];
-      writeCache(next);
-      return next;
-    });
-    for (const key of removed) {
-      void persistOrEnqueue({ op: "del", key, ts });
+    const current = readCache();
+    const next: ContactCache = { ...current };
+    let changed = false;
+    for (const key of keys) {
+      if (key in next) {
+        delete next[key];
+        changed = true;
+      }
     }
+    if (!changed) return;
+    writeCache(next);
+    setContactedMap(next);
   }
 
   function persistHidden(next: ColumnKey[]) {

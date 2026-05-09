@@ -1,3 +1,4 @@
+import datetime as dt
 from typing import Literal
 
 import asyncpg
@@ -284,6 +285,32 @@ async def upsert_contact(
             payload.target_key,
         )
     return dict(row)
+
+
+class ContactBulkItem(BaseModel):
+    target_key: str = Field(min_length=1, max_length=512)
+    marked_at: dt.datetime
+
+
+@app.put("/contacts/bulk")
+async def replace_contacts(
+    items: list[ContactBulkItem],
+    pool: asyncpg.Pool = Depends(get_pool),
+) -> dict:
+    """Полная замена снимка отметок одной транзакцией: source-of-truth = клиент.
+
+    Используется фронтом как periodic backup из LS. Никакого merge — тупо replace.
+    """
+    rows = [(it.target_key, it.marked_at) for it in items]
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("DELETE FROM contact_marks")
+            if rows:
+                await conn.executemany(
+                    "INSERT INTO contact_marks (target_key, marked_at) VALUES ($1, $2)",
+                    rows,
+                )
+    return {"count": len(rows)}
 
 
 @app.delete("/contacts", status_code=204)
