@@ -37,7 +37,7 @@ definitions:
   - id: БД ebay_to_buy
     body_markdown: |
       Рабочая БД системы закупок:
-      - host: `2.26.53.128`
+      - host: `194.164.245.107`
       - port: `5406`
       - database: `ebay_to_buy`
       - user: `admin`

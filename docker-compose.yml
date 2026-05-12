@@ -9,7 +9,7 @@ services:
       DATABASE_URL: postgresql://admin:Password123@ebay_to_buy:5432/ebay_to_buy
       HTTP_HOST: 0.0.0.0
       HTTP_PORT: "8000"
-      CORS_ORIGINS: http://2.26.53.128:3000
+      CORS_ORIGINS: http://194.164.245.107:3000
     networks:
       - db_default
 
@@ -19,6 +19,8 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://194.164.245.107:8000
     depends_on:
       - backend
     networks:

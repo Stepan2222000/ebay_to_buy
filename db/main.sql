@@ -1,12 +1,12 @@
 -- =============================================================================
 -- ebay_to_buy: схема БД, FDW и валидация
--- PostgreSQL 18, host 2.26.53.128, port 5406, dbname ebay_to_buy
+-- PostgreSQL 18, host 194.164.245.107, port 5406, dbname ebay_to_buy
 --
 -- Спецификация: ../purchase-logic.yaml
 -- План этапа:   ../IMPLEMENTATION-PLAN.md  (Этап 1)
 --
 -- Запуск:
---   PGPASSWORD=Password123 psql -h 2.26.53.128 -p 5406 -U admin \
+--   PGPASSWORD=Password123 psql -h 194.164.245.107 -p 5406 -U admin \
 --                               -d ebay_to_buy -f db/main.sql
 --
 -- Скрипт идемпотентен: повторный прогон не падает и не теряет данные
@@ -23,11 +23,11 @@ CREATE EXTENSION IF NOT EXISTS postgres_fdw;
 
 CREATE SERVER IF NOT EXISTS smart_server
     FOREIGN DATA WRAPPER postgres_fdw
-    OPTIONS (host '2.26.53.128', port '5402', dbname 'smart');
+    OPTIONS (host '194.164.245.107', port '5402', dbname 'smart');
 
 CREATE SERVER IF NOT EXISTS parts_uchet_server
     FOREIGN DATA WRAPPER postgres_fdw
-    OPTIONS (host '2.26.53.128', port '5403', dbname 'parts_uchet');
+    OPTIONS (host '194.164.245.107', port '5403', dbname 'parts_uchet');
 
 CREATE USER MAPPING IF NOT EXISTS FOR admin
     SERVER smart_server

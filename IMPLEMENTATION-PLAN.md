@@ -55,9 +55,9 @@
   - `[[audit]]` — минимальный уровень: `created_at`, `updated_at` (по тексту `[[audit]]` это и есть «минимально допустимо»; история изменений — опционально, в этап не входит).
 - **Зависит от этапов:** —.
 - **Pre-stage разведка (терминал):**
-  - `psql -h 2.26.53.128 -p 5402 ... -d smart -c "\d parts"` — подтвердить набор колонок, упомянутых в `[[smart catalog]]` (`id`, `name`, `articles`).
-  - `psql -h 2.26.53.128 -p 5403 ... -d parts_uchet -c "\d stock_raw"` — подтвердить наличие `smart_part_id`, `smart_name`, `total_qty`, упомянутых в `[[stock_raw]]`.
-  - `psql -h 2.26.53.128 -p 5406 ... -d ebay_to_buy -c "SELECT version(); \dx"` — версия PG и список расширений; нужен `postgres_fdw`. Параметры подключения сверяем с `[[БД ebay_to_buy]]`.
+  - `psql -h 194.164.245.107 -p 5402 ... -d smart -c "\d parts"` — подтвердить набор колонок, упомянутых в `[[smart catalog]]` (`id`, `name`, `articles`).
+  - `psql -h 194.164.245.107 -p 5403 ... -d parts_uchet -c "\d stock_raw"` — подтвердить наличие `smart_part_id`, `smart_name`, `total_qty`, упомянутых в `[[stock_raw]]`.
+  - `psql -h 194.164.245.107 -p 5406 ... -d ebay_to_buy -c "SELECT version(); \dx"` — версия PG и список расширений; нужен `postgres_fdw`. Параметры подключения сверяем с `[[БД ebay_to_buy]]`.
 - **Что делаем:**
   - В `ebay_to_buy@5406` — `CREATE EXTENSION postgres_fdw`. Этим закрываем «Подготовка БД и FDW — предпосылка работы, не runtime-flow» из `[[БД ebay_to_buy]]`.
   - Два **прямых** foreign server (без цепочки через 5403):
