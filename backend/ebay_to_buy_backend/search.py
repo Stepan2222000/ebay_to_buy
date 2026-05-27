@@ -46,7 +46,8 @@ deduped AS (
 SELECT d.smart_part_id,
        d.smart_name,
        d.articles_text,
-       COALESCE(sr.total_qty, 0) AS stock_total_qty,
+       (COALESCE(sr.total_pipeline_qty,0) + COALESCE(sr.as_kit_component_qty,0)
+            + COALESCE(sr.as_virtual_kit_qty,0)) AS stock_total_qty,
        pt.target_qty             AS existing_target_qty,
        pt.is_active              AS existing_is_active,
        d.bucket_rank

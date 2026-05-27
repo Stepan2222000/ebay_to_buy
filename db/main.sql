@@ -54,13 +54,19 @@ CREATE FOREIGN TABLE smart.parts (
 ) SERVER smart_server
   OPTIONS (schema_name 'public', table_name 'parts');
 
--- [[stock_raw]]: «используется только total_qty»; smart_name доступен,
--- но в purchase_overview мы берём smart_name из smart.parts (Q5).
+-- [[stock_raw]]: новый stock_raw (parts_uchet) отдаёт разбивку наличия.
+-- Для сигнала закупки берём «всё, что реально/потенциально доступно без покупки»:
+--   total_pipeline_qty  — годное на руках + едущее + заказано на eBay (без дефекта)
+--   as_kit_component_qty — детали, доступные через разбор разрешённых наборов
+--   as_virtual_kit_qty   — наборы, собираемые виртуально из свободных компонент
+-- stock_total_qty = сумма трёх (см. purchase_overview / search.py).
 DROP FOREIGN TABLE IF EXISTS parts_uchet.stock_raw CASCADE;
 CREATE FOREIGN TABLE parts_uchet.stock_raw (
-    smart_part_id text,
-    smart_name    text,
-    total_qty     integer
+    smart_part_id        text,
+    smart_name           text,
+    total_pipeline_qty   integer,
+    as_kit_component_qty integer,
+    as_virtual_kit_qty   integer
 ) SERVER parts_uchet_server
   OPTIONS (schema_name 'public', table_name 'stock_raw');
 
@@ -175,9 +181,12 @@ SELECT
     sp.name                                                AS smart_name,
     array_to_string(sp.articles, ', ')                     AS articles_text,
     pt.target_qty,
-    COALESCE(sr.total_qty, 0)                              AS stock_total_qty,
-    GREATEST(pt.target_qty - COALESCE(sr.total_qty, 0), 0) AS need_qty,
-    pt.target_qty > COALESCE(sr.total_qty, 0)              AS is_need,
+    (COALESCE(sr.total_pipeline_qty,0) + COALESCE(sr.as_kit_component_qty,0)
+        + COALESCE(sr.as_virtual_kit_qty,0))               AS stock_total_qty,
+    GREATEST(pt.target_qty - (COALESCE(sr.total_pipeline_qty,0)
+        + COALESCE(sr.as_kit_component_qty,0) + COALESCE(sr.as_virtual_kit_qty,0)), 0) AS need_qty,
+    pt.target_qty > (COALESCE(sr.total_pipeline_qty,0)
+        + COALESCE(sr.as_kit_component_qty,0) + COALESCE(sr.as_virtual_kit_qty,0)) AS is_need,
     pt.is_active,
 
     COUNT(el.id)         FILTER (WHERE NOT el.is_ended)
@@ -208,7 +217,9 @@ GROUP BY
     pt.smart_part_id,
     sp.name,
     sp.articles,
-    sr.total_qty,
+    sr.total_pipeline_qty,
+    sr.as_kit_component_qty,
+    sr.as_virtual_kit_qty,
     pt.target_qty,
     pt.is_active,
     pt.created_at,
