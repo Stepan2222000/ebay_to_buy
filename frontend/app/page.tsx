@@ -13,9 +13,10 @@ export default async function Page({ searchParams }: { searchParams: Search }) {
   const filters = pickFilters(sp);
   const qs = buildQs(filters, DEFAULT_SORT);
   try {
-    const [rows, listings] = await Promise.all([
+    const [rows, listings, productTypes] = await Promise.all([
       apiGet<OverviewRow[]>(`/overview${qs ? "?" + qs : ""}`),
       apiGet<Listing[]>("/listings"),
+      apiGet<string[]>("/product-types"),
     ]);
     return (
       <OverviewTable
@@ -29,6 +30,7 @@ export default async function Page({ searchParams }: { searchParams: Search }) {
         enableHide
         hideStorageKey="overview-all:hidden-cols"
         layoutStorageKey="overview-all:layout"
+        productTypes={productTypes}
       />
     );
   } catch (e) {

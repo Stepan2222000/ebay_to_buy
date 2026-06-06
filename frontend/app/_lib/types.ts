@@ -3,6 +3,7 @@
 export type OverviewRow = {
   smart_part_id: string;
   smart_name: string;
+  product_type: string | null;
   articles_text: string | null;
   target_qty: number;
   stock_total_qty: number;
@@ -69,5 +70,6 @@ export type OverviewFilters = {
   has_ended_ebay?: "true" | "false";
   q?: string;
   min_need_qty?: string;
+  product_type?: string;
   sort?: SortKey;
 };

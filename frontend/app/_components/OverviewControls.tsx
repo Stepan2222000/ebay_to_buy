@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDownUp, Columns3, RotateCcw, Search, Tag, X } from "lucide-react";
+import { ArrowDownUp, Columns3, Layers, RotateCcw, Search, Tag, X } from "lucide-react";
 import { OverviewFilters, SortKey } from "../_lib/types";
 import { COL_LABELS, ColumnKey } from "./overviewColumns";
 import { Dropdown } from "./Dropdown";
@@ -33,6 +33,7 @@ export function OverviewControls({
   contactMode,
   onToggleContactMode,
   onResetContacts,
+  productTypes = [],
 }: {
   basePath: string;
   current: OverviewFilters;
@@ -45,6 +46,7 @@ export function OverviewControls({
   contactMode: boolean;
   onToggleContactMode: () => void;
   onResetContacts: () => void;
+  productTypes?: string[];
 }) {
   const router = useRouter();
   const [q, setQ] = useState(current.q ?? "");
@@ -165,6 +167,41 @@ export function OverviewControls({
             </button>
           ) : null}
         </div>
+
+        {productTypes.length > 0 ? (
+          <Dropdown
+            icon={<Layers size={14} strokeWidth={2} />}
+            label={current.product_type ?? "все категории"}
+            align="right"
+            width={240}
+            testId="product-type-dropdown"
+          >
+            {(close) => (
+              <ul className="menu">
+                <li>
+                  <button
+                    type="button"
+                    className={`menu-item${!current.product_type ? " active" : ""}`}
+                    onClick={() => { pushWith({ product_type: undefined }); close(); }}
+                  >
+                    все категории
+                  </button>
+                </li>
+                {productTypes.map((t) => (
+                  <li key={t}>
+                    <button
+                      type="button"
+                      className={`menu-item${current.product_type === t ? " active" : ""}`}
+                      onClick={() => { pushWith({ product_type: t }); close(); }}
+                    >
+                      {t}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Dropdown>
+        ) : null}
 
         <Dropdown
           icon={<ArrowDownUp size={14} strokeWidth={2} />}

@@ -169,6 +169,7 @@ export function OverviewTable({
   enableHide = false,
   hideStorageKey,
   layoutStorageKey,
+  productTypes = [],
 }: {
   rows: OverviewRow[];
   listings: Listing[];
@@ -180,6 +181,7 @@ export function OverviewTable({
   enableHide?: boolean;
   hideStorageKey?: string;
   layoutStorageKey?: string;
+  productTypes?: string[];
 }) {
   const orderKey   = layoutStorageKey ? `${layoutStorageKey}:order` : undefined;
   const sizesKey   = layoutStorageKey ? `${layoutStorageKey}:sizes` : undefined;
@@ -382,6 +384,7 @@ export function OverviewTable({
         contactMode={contactMode}
         onToggleContactMode={toggleContactMode}
         onResetContacts={resetContacts}
+        productTypes={productTypes}
       />
 
       {rows.length === 0 ? (

@@ -1,8 +1,8 @@
 import datetime as dt
-from typing import Literal
+from typing import Annotated, Literal
 
 import asyncpg
-from fastapi import Depends, FastAPI, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -32,17 +32,66 @@ async def get_overview(
     has_ended_ebay: bool | None = None,
     q: str | None = None,
     min_need_qty: int | None = None,
+    product_type: Annotated[list[str] | None, Query()] = None,
     sort: str = "smart_part_id",
     pool: asyncpg.Pool = Depends(get_pool),
 ) -> list[dict]:
     sql, params = excel._build_overview_query(
         is_need=is_need, is_active=is_active,
         has_active_ebay=has_active_ebay, has_ended_ebay=has_ended_ebay,
-        q=q, min_need_qty=min_need_qty, sort=sort,
+        q=q, min_need_qty=min_need_qty, product_type=product_type, sort=sort,
     )
     async with pool.acquire() as conn:
         rows = await conn.fetch(sql, *params)
     return [dict(r) for r in rows]
+
+
+# ---------- /feed (фид закупки с тумблерами наличия) --------------------------
+
+
+@app.get("/feed")
+async def get_feed(
+    product_type: Annotated[list[str] | None, Query()] = None,
+    include_personal: bool = True,
+    include_in_transit: bool = True,
+    include_ebay_pending: bool = True,
+    include_kit_breakdown: bool = True,
+    include_virtual_kit: bool = True,
+    include_defect: bool = True,
+    only_need: bool = True,
+    pool: asyncpg.Pool = Depends(get_pool),
+) -> list[dict]:
+    """Что закупать: активные цели, наличие = on_hand_new + включённые компоненты.
+
+    Та же логика, что SQL-функция purchase_feed() — её и зовём, логика одна.
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM purchase_feed($1, $2, $3, $4, $5, $6, $7, $8)",
+            product_type,
+            include_personal,
+            include_in_transit,
+            include_ebay_pending,
+            include_kit_breakdown,
+            include_virtual_kit,
+            include_defect,
+            only_need,
+        )
+    return [dict(r) for r in rows]
+
+
+# ---------- /product-types ----------------------------------------------------
+
+
+@app.get("/product-types")
+async def list_product_types(pool: asyncpg.Pool = Depends(get_pool)) -> list[str]:
+    """Категории, реально встречающиеся среди целей закупки (для фильтра UI)."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT DISTINCT product_type FROM purchase_overview "
+            "WHERE product_type IS NOT NULL ORDER BY product_type"
+        )
+    return [r["product_type"] for r in rows]
 
 
 # ---------- /smart/search -----------------------------------------------------
@@ -346,6 +395,7 @@ async def export_xlsx(
     has_ended_ebay: bool | None = None,
     q: str | None = None,
     min_need_qty: int | None = None,
+    product_type: Annotated[list[str] | None, Query()] = None,
     sort: str = "smart_part_id",
     explode_articles: bool = False,
     explode_active_ebay: bool = False,
@@ -360,6 +410,7 @@ async def export_xlsx(
         has_ended_ebay=has_ended_ebay,
         q=q,
         min_need_qty=min_need_qty,
+        product_type=product_type,
         sort=sort,
         explode_articles=explode_articles,
         explode_active_ebay=explode_active_ebay,

@@ -21,6 +21,7 @@ export function pickFilters(
   }
   if (s.q && s.q.trim()) out.q = s.q.trim();
   if (s.min_need_qty && /^\d+$/.test(s.min_need_qty)) out.min_need_qty = s.min_need_qty;
+  if (s.product_type && s.product_type.trim()) out.product_type = s.product_type.trim();
   if (isSortKey(s.sort)) out.sort = s.sort;
   return out;
 }

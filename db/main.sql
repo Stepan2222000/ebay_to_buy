@@ -45,30 +45,36 @@ CREATE SCHEMA IF NOT EXISTS parts_uchet;
 -- SECTION 2. Foreign tables (только нужные колонки по purchase-logic.yaml)
 -- =============================================================================
 
--- [[smart catalog]]: используем только id, name, articles
+-- [[smart catalog]]: используем id, name, articles, product_type
 DROP FOREIGN TABLE IF EXISTS smart.parts CASCADE;
 CREATE FOREIGN TABLE smart.parts (
-    id        text   NOT NULL,
-    name      text   NOT NULL,
-    articles  text[] NOT NULL
+    id           text   NOT NULL,
+    name         text   NOT NULL,
+    articles     text[] NOT NULL,
+    product_type text   NOT NULL
 ) SERVER smart_server
   OPTIONS (schema_name 'public', table_name 'parts');
 
--- [[stock_raw]]: новый stock_raw (parts_uchet) отдаёт разбивку наличия.
--- Для сигнала закупки берём «всё, что реально/потенциально доступно без покупки»:
---   total_pipeline_qty  — годное на руках + едущее + заказано на eBay (без дефекта)
---   as_kit_component_qty — детали, доступные через разбор разрешённых наборов
---   as_virtual_kit_qty   — наборы, собираемые виртуально из свободных компонент
--- stock_total_qty = сумма трёх (см. purchase_overview / search.py).
+-- [[purchase_feed_components]]: компоненты наличия из parts_uchet (замена
+-- stock_raw, см. uchet_parts/specs/purchase_feed_components.md). Каждый источник
+-- отдельной колонкой; что считать наличием — решают тумблеры purchase_feed().
+-- По умолчанию наличием считается ВСЁ (сумма всех компонентов).
 DROP FOREIGN TABLE IF EXISTS parts_uchet.stock_raw CASCADE;
-CREATE FOREIGN TABLE parts_uchet.stock_raw (
-    smart_part_id        text,
-    smart_name           text,
-    total_pipeline_qty   integer,
-    as_kit_component_qty integer,
-    as_virtual_kit_qty   integer
+DROP FOREIGN TABLE IF EXISTS parts_uchet.purchase_feed_components CASCADE;
+CREATE FOREIGN TABLE parts_uchet.purchase_feed_components (
+    smart_part_id            text,
+    smart_name               text,
+    product_type             text,
+    on_hand_new_qty          integer,
+    on_hand_personal_qty     integer,
+    in_transit_linked_qty    integer,
+    in_transit_unlinked_qty  integer,
+    ebay_ordered_pending_qty integer,
+    kit_breakdown_qty        integer,
+    virtual_kit_qty          integer,
+    defect_qty               integer
 ) SERVER parts_uchet_server
-  OPTIONS (schema_name 'public', table_name 'stock_raw');
+  OPTIONS (schema_name 'public', table_name 'purchase_feed_components');
 
 
 -- =============================================================================
@@ -176,17 +182,25 @@ CREATE OR REPLACE TRIGGER ebay_listings_set_updated_at
 DROP VIEW IF EXISTS purchase_overview CASCADE;
 
 CREATE VIEW purchase_overview AS
+WITH stock AS (
+    -- дефолтная политика: наличием считается ВСЁ (все компоненты, включая
+    -- потенциалы и дефект). Выборочная политика — через purchase_feed().
+    SELECT smart_part_id,
+           (on_hand_new_qty + on_hand_personal_qty
+            + in_transit_linked_qty + in_transit_unlinked_qty
+            + ebay_ordered_pending_qty
+            + kit_breakdown_qty + virtual_kit_qty + defect_qty) AS stock_total_qty
+    FROM parts_uchet.purchase_feed_components
+)
 SELECT
     pt.smart_part_id,
     sp.name                                                AS smart_name,
+    sp.product_type,
     array_to_string(sp.articles, ', ')                     AS articles_text,
     pt.target_qty,
-    (COALESCE(sr.total_pipeline_qty,0) + COALESCE(sr.as_kit_component_qty,0)
-        + COALESCE(sr.as_virtual_kit_qty,0))               AS stock_total_qty,
-    GREATEST(pt.target_qty - (COALESCE(sr.total_pipeline_qty,0)
-        + COALESCE(sr.as_kit_component_qty,0) + COALESCE(sr.as_virtual_kit_qty,0)), 0) AS need_qty,
-    pt.target_qty > (COALESCE(sr.total_pipeline_qty,0)
-        + COALESCE(sr.as_kit_component_qty,0) + COALESCE(sr.as_virtual_kit_qty,0)) AS is_need,
+    COALESCE(sr.stock_total_qty, 0)                        AS stock_total_qty,
+    GREATEST(pt.target_qty - COALESCE(sr.stock_total_qty, 0), 0) AS need_qty,
+    pt.target_qty > COALESCE(sr.stock_total_qty, 0)        AS is_need,
     pt.is_active,
 
     COUNT(el.id)         FILTER (WHERE NOT el.is_ended)
@@ -209,24 +223,106 @@ SELECT
 
     pt.created_at,
     pt.updated_at
-FROM      purchase_targets       pt
-LEFT JOIN smart.parts            sp ON sp.id            = pt.smart_part_id
-LEFT JOIN parts_uchet.stock_raw  sr ON sr.smart_part_id = pt.smart_part_id
-LEFT JOIN ebay_listings          el ON el.smart_part_id = pt.smart_part_id
+FROM      purchase_targets pt
+LEFT JOIN smart.parts      sp ON sp.id            = pt.smart_part_id
+LEFT JOIN stock            sr ON sr.smart_part_id = pt.smart_part_id
+LEFT JOIN ebay_listings    el ON el.smart_part_id = pt.smart_part_id
 GROUP BY
     pt.smart_part_id,
     sp.name,
+    sp.product_type,
     sp.articles,
-    sr.total_pipeline_qty,
-    sr.as_kit_component_qty,
-    sr.as_virtual_kit_qty,
+    sr.stock_total_qty,
     pt.target_qty,
     pt.is_active,
     pt.created_at,
     pt.updated_at;
 
 COMMENT ON VIEW purchase_overview IS
-    'Главная вьюха ebay_to_buy: цели + наличие из parts_uchet.stock_raw + агрегаты по eBay-объявлениям. См. purchase-logic.yaml [[purchase_overview]].';
+    'Главная вьюха ebay_to_buy: цели + наличие из parts_uchet.purchase_feed_components (дефолтная политика: всё считается наличием) + агрегаты по eBay-объявлениям. См. purchase-logic.yaml [[purchase_overview]].';
+
+-- =============================================================================
+-- SECTION 6b. Функция purchase_feed — фид «что закупать» с тумблерами наличия
+-- =============================================================================
+-- Параметризуемая «вьюха»: компоненты наличия включаются/выключаются флагами,
+-- по умолчанию ВСЁ включено. on_hand_new считается наличием всегда.
+-- Потребители: HTTP GET /feed (бэкенд) и прямой SQL/FDW (программа-закупщик):
+--   SELECT * FROM purchase_feed();                                -- всё к закупке
+--   SELECT * FROM purchase_feed(ARRAY['Для мототехники']);        -- категория
+--   SELECT * FROM purchase_feed(p_include_ebay_pending := false); -- едущее с eBay не считать
+
+DROP FUNCTION IF EXISTS purchase_feed;
+
+CREATE FUNCTION purchase_feed(
+    p_product_types         text[]  DEFAULT NULL,  -- NULL = все категории
+    p_include_personal      boolean DEFAULT true,  -- personal на руках
+    p_include_in_transit    boolean DEFAULT true,  -- заведённые едущие (linked+unlinked)
+    p_include_ebay_pending  boolean DEFAULT true,  -- заказано на eBay, не заведено
+    p_include_kit_breakdown boolean DEFAULT true,  -- потенциал разбора наборов
+    p_include_virtual_kit   boolean DEFAULT true,  -- потенциал виртуальной сборки
+    p_include_defect        boolean DEFAULT true,  -- дефектные
+    p_only_need             boolean DEFAULT true   -- только строки с нехваткой
+) RETURNS TABLE (
+    smart_part_id            text,
+    smart_name               text,
+    product_type             text,
+    articles_text            text,
+    target_qty               integer,
+    stock_qty                integer,
+    need_qty                 integer,
+    on_hand_new_qty          integer,
+    on_hand_personal_qty     integer,
+    in_transit_linked_qty    integer,
+    in_transit_unlinked_qty  integer,
+    ebay_ordered_pending_qty integer,
+    kit_breakdown_qty        integer,
+    virtual_kit_qty          integer,
+    defect_qty               integer
+) LANGUAGE sql STABLE AS $$
+WITH base AS (
+    SELECT
+        pt.smart_part_id,
+        sp.name                            AS smart_name,
+        sp.product_type,
+        array_to_string(sp.articles, ', ') AS articles_text,
+        pt.target_qty,
+        (COALESCE(c.on_hand_new_qty, 0)
+         + CASE WHEN p_include_personal      THEN COALESCE(c.on_hand_personal_qty, 0)     ELSE 0 END
+         + CASE WHEN p_include_in_transit    THEN COALESCE(c.in_transit_linked_qty, 0)
+                                                  + COALESCE(c.in_transit_unlinked_qty, 0) ELSE 0 END
+         + CASE WHEN p_include_ebay_pending  THEN COALESCE(c.ebay_ordered_pending_qty, 0) ELSE 0 END
+         + CASE WHEN p_include_kit_breakdown THEN COALESCE(c.kit_breakdown_qty, 0)        ELSE 0 END
+         + CASE WHEN p_include_virtual_kit   THEN COALESCE(c.virtual_kit_qty, 0)          ELSE 0 END
+         + CASE WHEN p_include_defect        THEN COALESCE(c.defect_qty, 0)               ELSE 0 END
+        )                                  AS stock_qty,
+        COALESCE(c.on_hand_new_qty, 0)          AS on_hand_new_qty,
+        COALESCE(c.on_hand_personal_qty, 0)     AS on_hand_personal_qty,
+        COALESCE(c.in_transit_linked_qty, 0)    AS in_transit_linked_qty,
+        COALESCE(c.in_transit_unlinked_qty, 0)  AS in_transit_unlinked_qty,
+        COALESCE(c.ebay_ordered_pending_qty, 0) AS ebay_ordered_pending_qty,
+        COALESCE(c.kit_breakdown_qty, 0)        AS kit_breakdown_qty,
+        COALESCE(c.virtual_kit_qty, 0)          AS virtual_kit_qty,
+        COALESCE(c.defect_qty, 0)               AS defect_qty
+    FROM purchase_targets pt
+    LEFT JOIN smart.parts sp ON sp.id = pt.smart_part_id
+    LEFT JOIN parts_uchet.purchase_feed_components c ON c.smart_part_id = pt.smart_part_id
+    WHERE pt.is_active
+      AND (p_product_types IS NULL OR sp.product_type = ANY (p_product_types))
+)
+SELECT
+    smart_part_id, smart_name, product_type, articles_text,
+    target_qty, stock_qty,
+    GREATEST(target_qty - stock_qty, 0) AS need_qty,
+    on_hand_new_qty, on_hand_personal_qty,
+    in_transit_linked_qty, in_transit_unlinked_qty,
+    ebay_ordered_pending_qty, kit_breakdown_qty, virtual_kit_qty, defect_qty
+FROM base
+WHERE NOT p_only_need OR target_qty > stock_qty
+ORDER BY GREATEST(target_qty - stock_qty, 0) DESC, smart_part_id;
+$$;
+
+COMMENT ON FUNCTION purchase_feed IS
+    'Фид закупки: активные цели с нехваткой, наличие = on_hand_new + включённые тумблерами компоненты (по умолчанию все). p_only_need=false — все активные цели. Фильтр категорий p_product_types (NULL = все).';
 
 -- =============================================================================
 -- SECTION 7. UI state — отметки контактов и однотумблерные настройки
