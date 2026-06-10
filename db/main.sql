@@ -45,15 +45,18 @@ CREATE SCHEMA IF NOT EXISTS parts_uchet;
 -- SECTION 2. Foreign tables (только нужные колонки по purchase-logic.yaml)
 -- =============================================================================
 
--- [[smart catalog]]: используем id, name, articles, product_type
+-- [[smart catalog]]: используем id, name, articles, product_type.
+-- С миграции 015 в smart колонки parts.product_type НЕТ — тип вычисляется
+-- из классов техники (vehicle_classes) во VIEW parts_with_components,
+-- поэтому foreign table смотрит на view (read-only, нам только чтение).
 DROP FOREIGN TABLE IF EXISTS smart.parts CASCADE;
 CREATE FOREIGN TABLE smart.parts (
     id           text   NOT NULL,
     name         text   NOT NULL,
     articles     text[] NOT NULL,
-    product_type text   NOT NULL
+    product_type text
 ) SERVER smart_server
-  OPTIONS (schema_name 'public', table_name 'parts');
+  OPTIONS (schema_name 'public', table_name 'parts_with_components');
 
 -- [[purchase_feed_components]]: компоненты наличия из parts_uchet (замена
 -- stock_raw, см. uchet_parts/specs/purchase_feed_components.md). Каждый источник
