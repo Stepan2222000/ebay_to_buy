@@ -1,5 +1,5 @@
 import { apiGet, ApiError } from "../_lib/api";
-import { OverviewRow, OverviewFilters, SortKey, Listing } from "../_lib/types";
+import { OverviewRow, OverviewFilters, SortKey, Listing, SeasonSettings } from "../_lib/types";
 import { buildQs, pickFilters } from "../_lib/filters";
 import { OverviewTable } from "../_components/OverviewTable";
 import { ErrorBox } from "../_components/ErrorBox";
@@ -13,10 +13,10 @@ export default async function Page({ searchParams }: { searchParams: Search }) {
   const filters = pickFilters(sp, { is_need: "true" });
   const qs = buildQs(filters, DEFAULT_SORT);
   try {
-    const [rows, listings, productTypes] = await Promise.all([
+    const [rows, listings, seasonSettings] = await Promise.all([
       apiGet<OverviewRow[]>(`/overview?${qs}`),
       apiGet<Listing[]>("/listings"),
-      apiGet<string[]>("/product-types"),
+      apiGet<SeasonSettings>("/settings/season"),
     ]);
     return (
       <OverviewTable
@@ -30,7 +30,7 @@ export default async function Page({ searchParams }: { searchParams: Search }) {
         enableHide
         hideStorageKey="overview-needed:hidden-cols"
         layoutStorageKey="overview-needed:layout"
-        productTypes={productTypes}
+        seasonSettings={seasonSettings}
       />
     );
   } catch (e) {

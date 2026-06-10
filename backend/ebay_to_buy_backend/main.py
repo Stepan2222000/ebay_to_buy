@@ -32,14 +32,13 @@ async def get_overview(
     has_ended_ebay: bool | None = None,
     q: str | None = None,
     min_need_qty: int | None = None,
-    product_type: Annotated[list[str] | None, Query()] = None,
     sort: str = "smart_part_id",
     pool: asyncpg.Pool = Depends(get_pool),
 ) -> list[dict]:
     sql, params = excel._build_overview_query(
         is_need=is_need, is_active=is_active,
         has_active_ebay=has_active_ebay, has_ended_ebay=has_ended_ebay,
-        q=q, min_need_qty=min_need_qty, product_type=product_type, sort=sort,
+        q=q, min_need_qty=min_need_qty, sort=sort,
     )
     async with pool.acquire() as conn:
         rows = await conn.fetch(sql, *params)
@@ -51,7 +50,6 @@ async def get_overview(
 
 @app.get("/feed")
 async def get_feed(
-    product_type: Annotated[list[str] | None, Query()] = None,
     include_personal: bool = True,
     include_in_transit: bool = True,
     include_ebay_pending: bool = True,
@@ -64,11 +62,11 @@ async def get_feed(
     """Что закупать: активные цели, наличие = on_hand_new + включённые компоненты.
 
     Та же логика, что SQL-функция purchase_feed() — её и зовём, логика одна.
+    Сезонное окно берётся из глобальной настройки (effective_season_months()).
     """
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM purchase_feed($1, $2, $3, $4, $5, $6, $7, $8)",
-            product_type,
+            "SELECT * FROM purchase_feed(effective_season_months(), $1, $2, $3, $4, $5, $6, $7)",
             include_personal,
             include_in_transit,
             include_ebay_pending,
@@ -78,20 +76,6 @@ async def get_feed(
             only_need,
         )
     return [dict(r) for r in rows]
-
-
-# ---------- /product-types ----------------------------------------------------
-
-
-@app.get("/product-types")
-async def list_product_types(pool: asyncpg.Pool = Depends(get_pool)) -> list[str]:
-    """Категории, реально встречающиеся среди целей закупки (для фильтра UI)."""
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT DISTINCT product_type FROM purchase_overview "
-            "WHERE product_type IS NOT NULL ORDER BY product_type"
-        )
-    return [r["product_type"] for r in rows]
 
 
 # ---------- /smart/search -----------------------------------------------------
@@ -381,6 +365,54 @@ async def set_contact_mode(
     return {"value": payload.value}
 
 
+# ---------- /settings/season (глобальный сезонный режим; его же читает parser_ebay)
+
+
+class SeasonSettingsIn(BaseModel):
+    enabled: bool
+    months_ahead: int = Field(ge=0, le=11)
+
+
+@app.get("/settings/season")
+async def get_season_settings(pool: asyncpg.Pool = Depends(get_pool)) -> dict:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT key, value FROM app_settings WHERE key IN ('season-filter', 'season-months-ahead')"
+        )
+        months = await conn.fetchval("SELECT effective_season_months()")
+    kv = {r["key"]: r["value"] for r in rows}
+    return {
+        "enabled": kv.get("season-filter") == "on",
+        "months_ahead": int(kv.get("season-months-ahead", "1")),
+        "effective_months": list(months) if months is not None else None,
+    }
+
+
+@app.put("/settings/season")
+async def set_season_settings(
+    payload: SeasonSettingsIn,
+    pool: asyncpg.Pool = Depends(get_pool),
+) -> dict:
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            for key, value in (
+                ("season-filter", "on" if payload.enabled else "off"),
+                ("season-months-ahead", str(payload.months_ahead)),
+            ):
+                await conn.execute(
+                    "INSERT INTO app_settings (key, value, updated_at) "
+                    "VALUES ($1, $2, now()) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                    key, value,
+                )
+        months = await conn.fetchval("SELECT effective_season_months()")
+    return {
+        "enabled": payload.enabled,
+        "months_ahead": payload.months_ahead,
+        "effective_months": list(months) if months is not None else None,
+    }
+
+
 # ---------- /export.xlsx, /import.xlsx ----------------------------------------
 
 
@@ -395,7 +427,6 @@ async def export_xlsx(
     has_ended_ebay: bool | None = None,
     q: str | None = None,
     min_need_qty: int | None = None,
-    product_type: Annotated[list[str] | None, Query()] = None,
     sort: str = "smart_part_id",
     explode_articles: bool = False,
     explode_active_ebay: bool = False,
@@ -410,7 +441,6 @@ async def export_xlsx(
         has_ended_ebay=has_ended_ebay,
         q=q,
         min_need_qty=min_need_qty,
-        product_type=product_type,
         sort=sort,
         explode_articles=explode_articles,
         explode_active_ebay=explode_active_ebay,

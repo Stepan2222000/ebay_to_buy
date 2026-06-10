@@ -7,9 +7,11 @@ from openpyxl import Workbook, load_workbook
 
 
 def _excel_safe(value):
-    """Excel не поддерживает timezone-aware datetime."""
+    """Excel не поддерживает timezone-aware datetime и массивы (vehicle_classes)."""
     if isinstance(value, dt.datetime) and value.tzinfo is not None:
         return value.astimezone(dt.timezone.utc).replace(tzinfo=None)
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
     return value
 
 # [[Excel import#columns]] — точные имена колонок, регистр обязателен.
@@ -19,7 +21,7 @@ _REQUIRED_HEADERS = ("smart_part_id", "target_qty", "is_active")
 OVERVIEW_COLUMNS = (
     "smart_part_id",
     "smart_name",
-    "product_type",
+    "vehicle_classes",
     "articles_text",
     "target_qty",
     "stock_total_qty",
@@ -156,7 +158,6 @@ def _build_overview_query(
     has_ended_ebay: bool | None = None,
     q: str | None = None,
     min_need_qty: int | None = None,
-    product_type: list[str] | None = None,
     sort: SortKey = "smart_part_id",
 ) -> tuple[str, list]:
     where: list[str] = []
@@ -167,9 +168,13 @@ def _build_overview_query(
     if is_active is not None:
         params.append(is_active)
         where.append(f"is_active = ${len(params)}")
-    if product_type:
-        params.append(product_type)
-        where.append(f"product_type = ANY(${len(params)})")
+    # Сезонное окно из глобальной настройки: NULL = фильтр выключен.
+    where.append(
+        "(effective_season_months() IS NULL OR EXISTS ("
+        "SELECT 1 FROM smart.vehicle_classes vc "
+        "WHERE vc.slug = ANY (purchase_overview.vehicle_classes) "
+        "AND vc.season_months && effective_season_months()))"
+    )
     if has_active_ebay is not None:
         where.append("active_ebay_count > 0" if has_active_ebay else "active_ebay_count = 0")
     if has_ended_ebay is not None:
@@ -202,7 +207,6 @@ async def export_overview(
     has_ended_ebay: bool | None = None,
     q: str | None = None,
     min_need_qty: int | None = None,
-    product_type: list[str] | None = None,
     sort: SortKey = "smart_part_id",
     explode_articles: bool = False,
     explode_active_ebay: bool = False,
@@ -211,7 +215,7 @@ async def export_overview(
     sql, params = _build_overview_query(
         is_need=is_need, is_active=is_active,
         has_active_ebay=has_active_ebay, has_ended_ebay=has_ended_ebay,
-        q=q, min_need_qty=min_need_qty, product_type=product_type, sort=sort,
+        q=q, min_need_qty=min_need_qty, sort=sort,
     )
     async with pool.acquire() as conn:
         rows = await conn.fetch(sql, *params)

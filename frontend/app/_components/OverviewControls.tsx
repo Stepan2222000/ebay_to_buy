@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDownUp, Columns3, Layers, RotateCcw, Search, Tag, X } from "lucide-react";
-import { OverviewFilters, SortKey } from "../_lib/types";
+import { ArrowDownUp, CalendarRange, Columns3, RotateCcw, Search, Tag, X } from "lucide-react";
+import { OverviewFilters, SeasonSettings, SortKey } from "../_lib/types";
 import { COL_LABELS, ColumnKey } from "./overviewColumns";
 import { Dropdown } from "./Dropdown";
+import { apiSend } from "../_lib/api";
 
 const PILLS: Array<{ key: keyof OverviewFilters; label: string }> = [
   { key: "is_need",         label: "только нехватка" },
@@ -33,7 +34,7 @@ export function OverviewControls({
   contactMode,
   onToggleContactMode,
   onResetContacts,
-  productTypes = [],
+  seasonSettings,
 }: {
   basePath: string;
   current: OverviewFilters;
@@ -46,9 +47,13 @@ export function OverviewControls({
   contactMode: boolean;
   onToggleContactMode: () => void;
   onResetContacts: () => void;
-  productTypes?: string[];
+  seasonSettings?: SeasonSettings | null;
 }) {
   const router = useRouter();
+  const saveSeason = async (enabled: boolean, monthsAhead: number) => {
+    await apiSend("/settings/season", "PUT", { enabled, months_ahead: monthsAhead });
+    router.refresh();
+  };
   const [q, setQ] = useState(current.q ?? "");
   const debounceRef = useRef<number | null>(null);
 
@@ -168,37 +173,54 @@ export function OverviewControls({
           ) : null}
         </div>
 
-        {productTypes.length > 0 ? (
+        {seasonSettings ? (
           <Dropdown
-            icon={<Layers size={14} strokeWidth={2} />}
-            label={current.product_type ?? "все категории"}
+            icon={<CalendarRange size={14} strokeWidth={2} />}
+            label={seasonSettings.enabled
+              ? `сезон: +${seasonSettings.months_ahead} мес`
+              : "все сезоны"}
             align="right"
-            width={240}
-            testId="product-type-dropdown"
+            width={280}
+            testId="season-dropdown"
           >
             {(close) => (
-              <ul className="menu">
-                <li>
-                  <button
-                    type="button"
-                    className={`menu-item${!current.product_type ? " active" : ""}`}
-                    onClick={() => { pushWith({ product_type: undefined }); close(); }}
-                  >
-                    все категории
-                  </button>
-                </li>
-                {productTypes.map((t) => (
-                  <li key={t}>
-                    <button
-                      type="button"
-                      className={`menu-item${current.product_type === t ? " active" : ""}`}
-                      onClick={() => { pushWith({ product_type: t }); close(); }}
-                    >
-                      {t}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <div className="menu" style={{ padding: 10, display: "grid", gap: 8 }}>
+                <button
+                  type="button"
+                  className={`menu-item${!seasonSettings.enabled ? " active" : ""}`}
+                  onClick={() => { void saveSeason(false, seasonSettings.months_ahead); close(); }}
+                >
+                  все сезоны (фильтр выключен)
+                </button>
+                <button
+                  type="button"
+                  className={`menu-item${seasonSettings.enabled ? " active" : ""}`}
+                  onClick={() => { void saveSeason(true, seasonSettings.months_ahead); close(); }}
+                >
+                  сезонный режим
+                </button>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                  месяцев вперёд:
+                  <input
+                    type="number"
+                    min={0}
+                    max={11}
+                    defaultValue={seasonSettings.months_ahead}
+                    style={{ width: 64 }}
+                    onChange={(e) => {
+                      const v = Math.max(0, Math.min(11, Number(e.target.value) || 0));
+                      void saveSeason(seasonSettings.enabled, v);
+                    }}
+                    data-testid="season-months-ahead"
+                  />
+                </label>
+                <div style={{ fontSize: 12, opacity: 0.7 }}>
+                  Настройка глобальная — её же использует парсер закупки.
+                  {seasonSettings.effective_months
+                    ? ` Окно: ${seasonSettings.effective_months.join(", ")}.`
+                    : ""}
+                </div>
+              </div>
             )}
           </Dropdown>
         ) : null}

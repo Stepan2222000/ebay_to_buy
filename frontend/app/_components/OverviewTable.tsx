@@ -20,8 +20,7 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import {
-  OverviewRow, OverviewFilters, SortKey, Listing,
-} from "../_lib/types";
+  OverviewRow, OverviewFilters, SortKey, Listing, SeasonSettings, VEHICLE_CLASS_LABELS } from "../_lib/types";
 import { exportXlsxHref } from "../_lib/api";
 import { articleContactKey, listingContactKey, splitArticles } from "../_lib/contactKeys";
 import {
@@ -109,6 +108,16 @@ function renderCell(
       />
     );
   }
+  if (col === "vehicle_classes") {
+    const classes = (raw as string[] | null) ?? [];
+    return (
+      <span className="vc-chips">
+        {classes.map((c) => (
+          <span className="badge" key={c} title={c}>{VEHICLE_CLASS_LABELS[c] ?? c}</span>
+        ))}
+      </span>
+    );
+  }
   if (col === "is_need") {
     return raw
       ? <span className="badge badge-need">нехватка</span>
@@ -169,7 +178,7 @@ export function OverviewTable({
   enableHide = false,
   hideStorageKey,
   layoutStorageKey,
-  productTypes = [],
+  seasonSettings,
 }: {
   rows: OverviewRow[];
   listings: Listing[];
@@ -181,7 +190,7 @@ export function OverviewTable({
   enableHide?: boolean;
   hideStorageKey?: string;
   layoutStorageKey?: string;
-  productTypes?: string[];
+  seasonSettings?: SeasonSettings | null;
 }) {
   const orderKey   = layoutStorageKey ? `${layoutStorageKey}:order` : undefined;
   const sizesKey   = layoutStorageKey ? `${layoutStorageKey}:sizes` : undefined;
@@ -384,7 +393,7 @@ export function OverviewTable({
         contactMode={contactMode}
         onToggleContactMode={toggleContactMode}
         onResetContacts={resetContacts}
-        productTypes={productTypes}
+        seasonSettings={seasonSettings}
       />
 
       {rows.length === 0 ? (

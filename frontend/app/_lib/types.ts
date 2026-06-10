@@ -3,7 +3,7 @@
 export type OverviewRow = {
   smart_part_id: string;
   smart_name: string;
-  product_type: string | null;
+  vehicle_classes: string[] | null;
   articles_text: string | null;
   target_qty: number;
   stock_total_qty: number;
@@ -70,6 +70,22 @@ export type OverviewFilters = {
   has_ended_ebay?: "true" | "false";
   q?: string;
   min_need_qty?: string;
-  product_type?: string;
   sort?: SortKey;
+};
+
+// Глобальный сезонный режим закупки (его же использует parser_ebay).
+export type SeasonSettings = {
+  enabled: boolean;
+  months_ahead: number;
+  effective_months: number[] | null;
+};
+
+// Русские названия классов техники (слаги из smart.vehicle_classes).
+export const VEHICLE_CLASS_LABELS: Record<string, string> = {
+  boat: "Катера и моторы",
+  jetski: "Гидроциклы",
+  quad: "Квадроциклы",
+  snowmobile: "Снегоходы",
+  motorcycle: "Мотоциклы",
+  auto: "Автомобили",
 };

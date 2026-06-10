@@ -45,18 +45,29 @@ CREATE SCHEMA IF NOT EXISTS parts_uchet;
 -- SECTION 2. Foreign tables (только нужные колонки по purchase-logic.yaml)
 -- =============================================================================
 
--- [[smart catalog]]: используем id, name, articles, product_type.
--- С миграции 015 в smart колонки parts.product_type НЕТ — тип вычисляется
--- из классов техники (vehicle_classes) во VIEW parts_with_components,
--- поэтому foreign table смотрит на view (read-only, нам только чтение).
+-- [[smart catalog]]: используем id, name, articles, vehicle_classes.
+-- С миграции 015 эталон в smart — классы техники (vehicle_classes, слаги);
+-- категорий product_type в закупке больше нет — фильтр сезонный, по месяцам
+-- из справочника smart.vehicle_classes. Читаем через VIEW parts_with_components
+-- (read-only, нам только чтение).
 DROP FOREIGN TABLE IF EXISTS smart.parts CASCADE;
 CREATE FOREIGN TABLE smart.parts (
-    id           text   NOT NULL,
-    name         text   NOT NULL,
-    articles     text[] NOT NULL,
-    product_type text
+    id              text   NOT NULL,
+    name            text   NOT NULL,
+    articles        text[] NOT NULL,
+    vehicle_classes text[]
 ) SERVER smart_server
   OPTIONS (schema_name 'public', table_name 'parts_with_components');
+
+-- Справочник классов техники: сезоны спроса по месяцам (для сезонного фильтра).
+DROP FOREIGN TABLE IF EXISTS smart.vehicle_classes CASCADE;
+CREATE FOREIGN TABLE smart.vehicle_classes (
+    slug          text  NOT NULL,
+    title_ru      text  NOT NULL,
+    season_months int[] NOT NULL,
+    position      int   NOT NULL
+) SERVER smart_server
+  OPTIONS (schema_name 'public', table_name 'vehicle_classes');
 
 -- [[purchase_feed_components]]: компоненты наличия из parts_uchet (замена
 -- stock_raw, см. uchet_parts/specs/purchase_feed_components.md). Каждый источник
@@ -198,7 +209,7 @@ WITH stock AS (
 SELECT
     pt.smart_part_id,
     sp.name                                                AS smart_name,
-    sp.product_type,
+    sp.vehicle_classes,
     array_to_string(sp.articles, ', ')                     AS articles_text,
     pt.target_qty,
     COALESCE(sr.stock_total_qty, 0)                        AS stock_total_qty,
@@ -233,7 +244,7 @@ LEFT JOIN ebay_listings    el ON el.smart_part_id = pt.smart_part_id
 GROUP BY
     pt.smart_part_id,
     sp.name,
-    sp.product_type,
+    sp.vehicle_classes,
     sp.articles,
     sr.stock_total_qty,
     pt.target_qty,
@@ -249,15 +260,19 @@ COMMENT ON VIEW purchase_overview IS
 -- =============================================================================
 -- Параметризуемая «вьюха»: компоненты наличия включаются/выключаются флагами,
 -- по умолчанию ВСЁ включено. on_hand_new считается наличием всегда.
+-- Сезонный фильтр: p_months — месяцы (1-12); деталь проходит, если хотя бы один
+-- её класс техники имеет пересечение season_months с p_months. NULL = все.
+-- Глобальная настройка сезона — effective_season_months() (SECTION 7).
 -- Потребители: HTTP GET /feed (бэкенд) и прямой SQL/FDW (программа-закупщик):
---   SELECT * FROM purchase_feed();                                -- всё к закупке
---   SELECT * FROM purchase_feed(ARRAY['Для мототехники']);        -- категория
---   SELECT * FROM purchase_feed(p_include_ebay_pending := false); -- едущее с eBay не считать
+--   SELECT * FROM purchase_feed();                                  -- всё к закупке
+--   SELECT * FROM purchase_feed(effective_season_months());         -- по глобальной настройке
+--   SELECT * FROM purchase_feed(ARRAY[10,11,12]);                   -- явные месяцы
+--   SELECT * FROM purchase_feed(p_include_ebay_pending := false);   -- едущее с eBay не считать
 
 DROP FUNCTION IF EXISTS purchase_feed;
 
 CREATE FUNCTION purchase_feed(
-    p_product_types         text[]  DEFAULT NULL,  -- NULL = все категории
+    p_months                int[]   DEFAULT NULL,  -- месяцы сезона (1-12), NULL = все
     p_include_personal      boolean DEFAULT true,  -- personal на руках
     p_include_in_transit    boolean DEFAULT true,  -- заведённые едущие (linked+unlinked)
     p_include_ebay_pending  boolean DEFAULT true,  -- заказано на eBay, не заведено
@@ -268,7 +283,7 @@ CREATE FUNCTION purchase_feed(
 ) RETURNS TABLE (
     smart_part_id            text,
     smart_name               text,
-    product_type             text,
+    vehicle_classes          text[],
     articles_text            text,
     target_qty               integer,
     stock_qty                integer,
@@ -286,7 +301,7 @@ WITH base AS (
     SELECT
         pt.smart_part_id,
         sp.name                            AS smart_name,
-        sp.product_type,
+        sp.vehicle_classes,
         array_to_string(sp.articles, ', ') AS articles_text,
         pt.target_qty,
         (COALESCE(c.on_hand_new_qty, 0)
@@ -310,10 +325,13 @@ WITH base AS (
     LEFT JOIN smart.parts sp ON sp.id = pt.smart_part_id
     LEFT JOIN parts_uchet.purchase_feed_components c ON c.smart_part_id = pt.smart_part_id
     WHERE pt.is_active
-      AND (p_product_types IS NULL OR sp.product_type = ANY (p_product_types))
+      AND (p_months IS NULL OR EXISTS (
+              SELECT 1 FROM smart.vehicle_classes vc
+              WHERE vc.slug = ANY (sp.vehicle_classes)
+                AND vc.season_months && p_months))
 )
 SELECT
-    smart_part_id, smart_name, product_type, articles_text,
+    smart_part_id, smart_name, vehicle_classes, articles_text,
     target_qty, stock_qty,
     GREATEST(target_qty - stock_qty, 0) AS need_qty,
     on_hand_new_qty, on_hand_personal_qty,
@@ -325,7 +343,7 @@ ORDER BY GREATEST(target_qty - stock_qty, 0) DESC, smart_part_id;
 $$;
 
 COMMENT ON FUNCTION purchase_feed IS
-    'Фид закупки: активные цели с нехваткой, наличие = on_hand_new + включённые тумблерами компоненты (по умолчанию все). p_only_need=false — все активные цели. Фильтр категорий p_product_types (NULL = все).';
+    'Фид закупки: активные цели с нехваткой, наличие = on_hand_new + включённые тумблерами компоненты (по умолчанию все). p_only_need=false — все активные цели. Сезонный фильтр p_months: месяцы 1-12, NULL = все; глобальная настройка — effective_season_months().';
 
 -- =============================================================================
 -- SECTION 7. UI state — отметки контактов и однотумблерные настройки
@@ -350,7 +368,38 @@ CREATE TABLE IF NOT EXISTS app_settings (
 INSERT INTO app_settings (key, value) VALUES ('contact-mode', 'off')
     ON CONFLICT (key) DO NOTHING;
 
+-- Сезонный режим закупки: глобальные настройки, общие для UI и parser_ebay.
+INSERT INTO app_settings (key, value) VALUES ('season-filter', 'off')
+    ON CONFLICT (key) DO NOTHING;
+INSERT INTO app_settings (key, value) VALUES ('season-months-ahead', '1')
+    ON CONFLICT (key) DO NOTHING;
+
 COMMENT ON TABLE app_settings IS
-    'Однострочные UI-настройки приложения. Сейчас: contact-mode=on|off для подсветки контактных меток.';
+    'Однострочные UI-настройки приложения: contact-mode=on|off; season-filter=on|off и '
+    'season-months-ahead=N — глобальный сезонный режим закупки (его же использует parser_ebay).';
+
+-- Единая логика сезонного окна: NULL, если режим выключен; иначе месяцы
+-- [текущий .. текущий+N] с переходом через декабрь (ноябрь+2 -> {11,12,1}).
+-- p_anchor — для тестируемости (подмена «сегодня»).
+DROP FUNCTION IF EXISTS effective_season_months;
+CREATE FUNCTION effective_season_months(p_anchor date DEFAULT current_date)
+RETURNS int[] LANGUAGE sql STABLE AS $$
+SELECT CASE
+    WHEN (SELECT value FROM app_settings WHERE key = 'season-filter') IS DISTINCT FROM 'on'
+        THEN NULL
+    ELSE (
+        SELECT array_agg(((EXTRACT(MONTH FROM p_anchor)::int - 1 + g) % 12) + 1 ORDER BY g)
+        FROM generate_series(
+            0,
+            LEAST(GREATEST(COALESCE(
+                (SELECT value::int FROM app_settings WHERE key = 'season-months-ahead'), 1), 0), 11)
+        ) AS g
+    )
+END
+$$;
+
+COMMENT ON FUNCTION effective_season_months IS
+    'Сезонное окно закупки по глобальным настройкам app_settings: NULL = фильтр выключен; '
+    'иначе массив месяцев [текущий..текущий+season-months-ahead] (макс. 12 месяцев, wrap через декабрь).';
 
 COMMIT;

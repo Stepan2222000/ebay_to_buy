@@ -8,7 +8,7 @@
 export type ColumnKey =
   | "smart_part_id"
   | "smart_name"
-  | "product_type"
+  | "vehicle_classes"
   | "articles_text"
   | "ebay"
   | "target_qty"
@@ -22,7 +22,7 @@ export type ColumnKey =
 export const ALL_COLUMNS: readonly ColumnKey[] = [
   "smart_part_id",
   "smart_name",
-  "product_type",
+  "vehicle_classes",
   "articles_text",
   "ebay",
   "target_qty",
@@ -37,7 +37,7 @@ export const ALL_COLUMNS: readonly ColumnKey[] = [
 export const COL_LABELS: Record<ColumnKey, string> = {
   smart_part_id:   "smart-артикул",
   smart_name:      "название",
-  product_type:    "категория",
+  vehicle_classes: "классы",
   articles_text:   "артикулы",
   ebay:            "eBay-объявления",
   target_qty:      "цель",
@@ -58,7 +58,7 @@ export const NUMERIC: Set<ColumnKey> = new Set([
 export const DEFAULT_WIDTH: Record<ColumnKey, number> = {
   smart_part_id:   150,
   smart_name:      260,
-  product_type:    140,
+  vehicle_classes: 170,
   articles_text:   300,
   ebay:            480,
   target_qty:      80,

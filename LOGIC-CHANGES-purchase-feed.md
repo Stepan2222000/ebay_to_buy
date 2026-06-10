@@ -51,3 +51,30 @@
 - Привязка in-transit item к заказу необязательна (ручной приём не из eBay);
   двойной счёт unlinked-items контролируется глазами через колонку
   `in_transit_unlinked_qty`.
+
+---
+
+## 2026-06-10 — сезонный фильтр вместо категорий (vehicle classes, smart миграции 014-015)
+
+Категорий `product_type` в закупке больше нет — в smart эталоном стали классы
+техники (`parts.vehicle_classes`, слаги: boat/jetski/quad/snowmobile/motorcycle/auto)
+с сезонами по месяцам (`smart.vehicle_classes.season_months`).
+
+- FDW: `smart.parts` → колонка `vehicle_classes text[]` (вместо `product_type`);
+  новая FT `smart.vehicle_classes` (slug, title_ru, season_months, position).
+- `purchase_overview`: колонка `vehicle_classes` вместо `product_type`.
+- `purchase_feed(p_months int[] DEFAULT NULL, ...)` — сезонный фильтр: деталь
+  проходит, если хотя бы один её класс имеет пересечение season_months с p_months;
+  NULL = все. Выдача: `vehicle_classes` вместо `product_type`.
+- Глобальный сезонный режим: `app_settings` ключи `season-filter` (on|off,
+  дефолт off) и `season-months-ahead` (N, дефолт 1); SQL-функция
+  `effective_season_months()` → NULL (выключен) или [текущий месяц .. +N]
+  с переходом через декабрь. Одна логика для UI-бэкенда и parser_ebay.
+- HTTP: `GET/PUT /settings/season` (enabled, months_ahead, effective_months);
+  `/feed`, `/overview`, `/export.xlsx` применяют глобальную настройку сами,
+  параметр `product_type` удалён; `GET /product-types` удалён.
+- Фронт: дропдаун «сезон» (все сезоны / сезонный режим + месяцев вперёд,
+  пишет глобальную настройку), колонка «классы» чипами.
+- parser_ebay: `--product-types` → `--ignore-season`; seed зовёт
+  `purchase_feed(p_months := effective_season_months(), ...)`, фактическое
+  окно месяцев фиксируется в `runs.params.months`.
